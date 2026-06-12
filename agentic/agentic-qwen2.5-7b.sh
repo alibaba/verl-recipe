@@ -36,6 +36,7 @@ if [ "${ENVIRONMENT}" = "ack" ]; then
     REGISTRY="${REGISTRY:?请设置 REGISTRY，例如 zlaa-test-registry-vpc.us-east-1.cr.aliyuncs.com/zlaa}"
     KUBECONFIG="${KUBECONFIG:-}"
     IMAGE_PULL_SECRET="${IMAGE_PULL_SECRET:-acr-credential-secret-aggregation}"
+    BASE_IMAGE_REGISTRY="${BASE_IMAGE_REGISTRY:-}"
     SERVICE_ACCOUNT="${SERVICE_ACCOUNT:-rayclustertest}"
     USE_BUILDKIT="${USE_BUILDKIT:-true}"
     BUILDKIT_ADDRESS="${BUILDKIT_ADDRESS:-tcp://buildkitd:1234}"
@@ -44,7 +45,7 @@ if [ "${ENVIRONMENT}" = "ack" ]; then
     SANDBOXSET_REPLICAS="${SANDBOXSET_REPLICAS:-5}"
 
     REMOTE_AGENT_ENVIRONMENT_IMPORT_PATH="harbor.environments.ack:ACKEnvironment"
-    REMOTE_AGENT_ENVIRONMENT_KWARGS="{namespace: '${NAMESPACE}', registry: '${REGISTRY}', kubeconfig: '${KUBECONFIG}', image_pull_secret: '${IMAGE_PULL_SECRET}', service_account: '${SERVICE_ACCOUNT}', use_buildkit: ${USE_BUILDKIT}, buildkit_address: '${BUILDKIT_ADDRESS}', use_sandbox_claim: ${USE_SANDBOX_CLAIM}, claim_timeout: ${CLAIM_TIMEOUT}, sandboxset_replicas: ${SANDBOXSET_REPLICAS}}"
+    REMOTE_AGENT_ENVIRONMENT_KWARGS="{namespace: '${NAMESPACE}', registry: '${REGISTRY}', kubeconfig: '${KUBECONFIG}', image_pull_secret: '${IMAGE_PULL_SECRET}', base_image_registry: '${BASE_IMAGE_REGISTRY}', service_account: '${SERVICE_ACCOUNT}', use_buildkit: ${USE_BUILDKIT}, buildkit_address: '${BUILDKIT_ADDRESS}', use_sandbox_claim: ${USE_SANDBOX_CLAIM}, claim_timeout: ${CLAIM_TIMEOUT}, sandboxset_replicas: ${SANDBOXSET_REPLICAS}}"
 fi
 
 python3 -m recipe.agentic.agentic_main \
