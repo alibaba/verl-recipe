@@ -130,6 +130,17 @@ def _make_litellm_handler():
         import litellm
         from fastapi.responses import JSONResponse, StreamingResponse
 
+        span_id = proxy.recorder.start_span(
+            session_id=trial_id,
+            operation="llm.completion",
+            attributes={
+                "mode": "local",
+                "streaming": is_streaming,
+                "message_count": len(messages),
+                "max_tokens": body.get("max_tokens", 2048),
+            },
+        )
+
         completion_kwargs: dict[str, Any] = {
             "model": "verl-vllm/default",
             "messages": messages,
@@ -150,11 +161,16 @@ def _make_litellm_handler():
             response = await litellm.acompletion(**completion_kwargs)
         except Exception as e:
             logger.error("Generate failed for trial %s: %s", trial_id, e)
+            if span_id:
+                proxy.recorder.end_span(
+                    trial_id, span_id, status="error",
+                    attributes={"error": str(e)},
+                )
             return JSONResponse(status_code=500, content={"error": str(e)})
 
         if is_streaming:
             return StreamingResponse(
-                _stream_and_record(proxy, trial_id, messages, response),
+                _stream_and_record(proxy, trial_id, messages, response, span_id),
                 media_type="text/event-stream",
                 headers={
                     "Cache-Control": "no-cache",
@@ -165,6 +181,21 @@ def _make_litellm_handler():
 
         # Non-streaming: record and return
         _record_from_response(proxy, trial_id, messages, response)
+
+        if span_id:
+            choice = response.choices[0]
+            psf = getattr(choice, "provider_specific_fields", None) or {}
+            proxy.recorder.end_span(
+                trial_id, span_id, status="ok",
+                attributes={
+                    "completion_tokens": len(psf.get("token_ids", [])),
+                    "finish_reason": getattr(choice, "finish_reason", "stop") or "stop",
+                    "has_tool_calls": bool(
+                        hasattr(choice.message, "tool_calls") and choice.message.tool_calls
+                    ),
+                },
+            )
+
         return JSONResponse(content=response.model_dump())
 
     return _handle_local_completion
@@ -220,6 +251,7 @@ async def _stream_and_record(
     trial_id: str,
     messages: list[dict[str, Any]],
     stream,
+    span_id: str | None = None,
 ) -> Any:
     """Iterate a LiteLLM streaming response, yield SSE chunks, and record."""
     collected_text_parts: list[str] = []
@@ -269,6 +301,17 @@ async def _stream_and_record(
             finish_reason=finish_reason,
             tool_calls=tool_calls_collected if tool_calls_collected else None,
         )
+
+        if span_id:
+            proxy.recorder.end_span(
+                trial_id, span_id, status="ok",
+                attributes={
+                    "completion_tokens": len(collected_token_ids),
+                    "finish_reason": finish_reason,
+                    "has_tool_calls": bool(tool_calls_collected),
+                    "streaming": True,
+                },
+            )
 
 
 # ---------------------------------------------------------------------------

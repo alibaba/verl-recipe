@@ -43,9 +43,10 @@ from typing import Any, Callable, Coroutine
 from uuid import uuid4
 
 import uvicorn
-from fastapi import FastAPI, HTTPException, Request, WebSocket
+from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse, StreamingResponse
 
+from .models import TimelineSpan
 from .recorder import SessionRecorder
 
 logger = logging.getLogger(__name__)
@@ -98,6 +99,85 @@ def _build_app(proxy: "LLMProxyServer") -> FastAPI:
     async def delete_session(session_id: str):
         proxy.delete_session(session_id)
         return {"session_id": session_id, "status": "deleted"}
+
+    # ---- timeline endpoints --------------------------------------------
+
+    @app.get("/sessions/{session_id}/timeline")
+    async def get_timeline(
+        session_id: str,
+        since: float | None = Query(default=None),
+        type: str | None = Query(default=None),
+    ):
+        timeline = proxy.recorder.get_timeline(session_id)
+        if timeline is None:
+            raise HTTPException(status_code=404, detail="Session not found")
+        spans = timeline.get_spans(since=since, operation=type)
+        return {
+            "session_id": session_id,
+            "spans": [s.model_dump() for s in spans],
+        }
+
+    @app.get("/sessions/{session_id}/stats")
+    async def get_stats(session_id: str):
+        timeline = proxy.recorder.get_timeline(session_id)
+        if timeline is None:
+            raise HTTPException(status_code=404, detail="Session not found")
+        return timeline.compute_stats().model_dump()
+
+    @app.post("/sessions/{session_id}/events")
+    async def inject_events(session_id: str, request: Request):
+        timeline = proxy.recorder.get_timeline(session_id)
+        if timeline is None:
+            raise HTTPException(status_code=404, detail="Session not found")
+
+        body = await request.json()
+        spans_data = body.get("spans", [])
+        injected: list[str] = []
+
+        for span_data in spans_data:
+            span = TimelineSpan(**span_data)
+            timeline.add_standalone_span(span)
+            injected.append(span.span_id)
+
+        return {"session_id": session_id, "injected_span_ids": injected}
+
+    @app.websocket("/sessions/{session_id}/timeline/stream")
+    async def timeline_stream(session_id: str, ws: WebSocket):
+        timeline = proxy.recorder.get_timeline(session_id)
+        if timeline is None:
+            await ws.close(code=4004, reason="Session not found")
+            return
+
+        await ws.accept()
+        queue = timeline.subscribe()
+
+        try:
+            existing_spans = timeline.get_spans()
+            await ws.send_json(
+                {
+                    "type": "initial_state",
+                    "spans": [s.model_dump() for s in existing_spans],
+                }
+            )
+
+            while True:
+                try:
+                    message = await asyncio.wait_for(queue.get(), timeout=30.0)
+                except asyncio.TimeoutError:
+                    await ws.send_json({"type": "ping"})
+                    continue
+
+                if message.get("type") == "session_deleted":
+                    await ws.send_json(message)
+                    break
+
+                await ws.send_json(message)
+        except WebSocketDisconnect:
+            pass
+        except Exception as e:
+            logger.warning("Timeline stream error for %s: %s", session_id, e)
+        finally:
+            timeline.unsubscribe(queue)
 
     # ---- OpenAI-compatible chat completions ------------------------------
     # Two URL patterns so the proxy works with both:
@@ -159,6 +239,17 @@ async def _handle_relay_completion(
     is_streaming: bool,
 ):
     """Handle a completion request by relaying to a connected worker."""
+    span_id = proxy.recorder.start_span(
+        session_id=session_id,
+        operation="llm.completion",
+        attributes={
+            "mode": "relay",
+            "streaming": is_streaming,
+            "message_count": len(messages),
+            "max_tokens": body.get("max_tokens", 2048),
+        },
+    )
+
     try:
         result = await proxy.relay.dispatch(
             session_id=session_id,
@@ -173,12 +264,25 @@ async def _handle_relay_completion(
         )
     except RuntimeError as e:
         logger.error("Relay failed for session %s: %s", session_id, e)
+        if span_id:
+            proxy.recorder.end_span(
+                session_id, span_id, status="error", attributes={"error": str(e)}
+            )
         return JSONResponse(status_code=503, content={"error": str(e)})
     except Exception as e:
         logger.error("Relay error for session %s: %s", session_id, e)
+        if span_id:
+            proxy.recorder.end_span(
+                session_id, span_id, status="error", attributes={"error": str(e)}
+            )
         return JSONResponse(status_code=500, content={"error": str(e)})
 
     if result.get("error"):
+        if span_id:
+            proxy.recorder.end_span(
+                session_id, span_id, status="error",
+                attributes={"error": result["error"]},
+            )
         return JSONResponse(
             status_code=500, content={"error": result["error"]}
         )
@@ -199,6 +303,16 @@ async def _handle_relay_completion(
         finish_reason=finish_reason,
         tool_calls=tool_calls,
     )
+
+    if span_id:
+        proxy.recorder.end_span(
+            session_id, span_id, status="ok",
+            attributes={
+                "completion_tokens": len(token_ids),
+                "finish_reason": finish_reason,
+                "has_tool_calls": tool_calls is not None,
+            },
+        )
 
     # Build an OpenAI-compatible response
     response_body = build_openai_response(
