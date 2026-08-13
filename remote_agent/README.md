@@ -11,12 +11,13 @@ your own to drive any framework or subprocess.
 
 | Component | Version / commit |
 |-----------|-----------------|
-| verl (upstream `origin/main`) | `0.9.0.dev` @ `c16b7ee5` |
-| recipe submodule | `feat/remote-backend-megatron-sglang` |
+| verl (upstream `origin/main`) | `0.9.0.dev` @ `535c4779` |
+| recipe submodule | `release-remote-agent-rl` |
 | Python | 3.12 |
 | Ray | 2.54.0 |
 | SGLang | 0.5.12 |
-| transformers | 5.6.0 (*) |
+| transformers | < 5.6.0 |
+| TransferQueue | 0.1.8 |
 | Harbor (`alibaba/harbor` fork, branch `release-dev-e5e46809-rollout-server`) | 0.21.0 |
 
 > **No core verl changes required.** All compatibility gaps are handled inside
@@ -25,8 +26,8 @@ your own to drive any framework or subprocess.
 > (*) transformers ≥ 5.6.0 has a bug in
 > `transformers/integrations/flash_attention.py` where `s_aux` (an optional
 > "learnable attention sink" tensor) is unconditionally `.to()`-ed without a
-> `None` check, crashing models that don't use it (e.g. Qwen2). Pin
-> `transformers<5.6.0` or patch line 84 to
+> `None` check, crashing models that don't use it (e.g. Qwen2). The Dockerfile
+> pins `transformers<5.6.0`; if you must use 5.6.0+, patch line 84 to
 > `s_aux=s_aux.to(query.dtype) if s_aux is not None else None`.
 
 ## Relationship to `recipe/agentic`
@@ -196,11 +197,11 @@ out-of-band.
 
 ---
 
-## Runbook: cluster deployment (KubeRay + ACK sandbox)
+## Runbook: cluster deployment (KubeRay + E2B/ACK sandbox)
 
 This runbook covers a full end-to-end deployment on a K8s cluster with
-KubeRay, using the Harbor + swe-agent runner with ACK sandbox pods. Every
-`<placeholder>` should be replaced with your environment's value.
+KubeRay, using the Harbor + swe-agent runner with E2B or ACK sandbox pods.
+Every `<placeholder>` should be replaced with your environment's value.
 
 ### 1. Prerequisites
 
@@ -210,24 +211,28 @@ KubeRay, using the Harbor + swe-agent runner with ACK sandbox pods. Every
   `verl/` and `remote_agent/` are siblings).
 - **Harbor** installed from the `alibaba/harbor` fork, branch
   `release-dev-e5e46809-rollout-server` (version 0.21.0).
-  The upstream `harbor` PyPI package does **not** include the
-  `harbor.environments.ack.ACKEnvironment` class needed for K8s sandbox pods.
   Install from the fork:
   ```bash
   git clone -b release-dev-e5e46809-rollout-server https://github.com/alibaba/harbor.git
   pip install --ignore-installed ./harbor
-  pip install kubernetes   # for ACKEnvironment
+  pip install kubernetes kubernetes_asyncio e2b   # ACK + E2B sandbox support
   ```
-  Harbor provides the `Trial` + `ACKEnvironment` used to run swe-agent in sandbox pods.
-- A Docker image containing verl + remote_agent + harbor + swe-agent configs.
-  The image should have `/workspace` as the project root and `PYTHONPATH`
-  including `/workspace`.
+- **TransferQueue** (`pip install TransferQueue==0.1.8`) — required by verl's
+  7.1 TaskRunner (async rollout pattern).
+- **transformers < 5.6.0** — the Dockerfile pins this; 5.6.0+ has a
+  `flash_attention s_aux` bug that crashes Qwen2.
+- A Docker image containing verl + remote_agent + harbor + deps. The Dockerfile
+  at `remote_agent/docker/Dockerfile` is a reference; it copies
+  `sitecustomize.py` to `/workspace/` and sets `PYTHONPATH=/workspace`.
 - A K8s cluster with:
   - KubeRay operator (RayCluster CRD)
   - GPU nodes with appropriate tolerations
   - A `PersistentVolumeClaim` for model weights (read-only mount)
   - A `PersistentVolumeClaim` for task data (read-write mount, RWX)
-  - An image-pull secret for the sandbox images (if using a private registry)
+  - **For E2B mode**: sandbox-manager + sandbox-gateway deployed (e.g. in
+    `sandbox-system` namespace), and a `SandboxSet` CRD with pre-provisioned
+    sandbox pods matching the task images.
+  - **For ACK mode**: an image-pull secret for the sandbox images.
 
 ### 2. RayCluster manifest
 
@@ -382,31 +387,58 @@ cp -r /mnt/data/swe-bench-verified/<instance-id> /mnt/data/<task-set>/train/
 
 ### 4. Launch training
 
-The recipe ships a launch script that handles env-var-driven configuration:
+The recipe ships a launch script that handles env-var-driven configuration.
+Two sandbox modes are supported:
+
+**E2B mode** (recommended — uses sandbox-manager/gateway HTTP API):
 
 ```bash
 export MODEL_PATH=/mnt/models/<model-name>
 export TRAIN_TASKS=/mnt/data/<task-set>/train
 export VAL_TASKS=/mnt/data/<task-set>/val
+export SANDBOX_MODE=e2b
+export SANDBOX_SET=<sandboxset-name>          # pre-created SandboxSet
+# E2B env vars (set as pod env in RayCluster yaml):
+#   E2B_API_KEY=<admin-key>
+#   E2B_API_URL=http://sandbox-manager.sandbox-system:8080
+#   E2B_SANDBOX_URL=http://sandbox-gateway.sandbox-system:7788
+#   E2B_VALIDATE_API_KEY=false
 
-# ACK sandbox mode (K8s pods instead of Docker containers)
+bash remote_agent/scripts/train_harbor_sweagent.sh [hydra overrides...]
+```
+
+**ACK mode** (direct K8s pod creation, needs RBAC):
+
+```bash
 export SANDBOX_MODE=ack
 export SANDBOX_NAMESPACE=<namespace>
 export SANDBOX_IMAGE_PULL_SECRET=<sandbox-image-pull-secret>
-export SANDBOX_MEMORY_LIMIT_MULT=4   # multiply task.toml memory limit (e.g. 4Gi→16Gi)
+export SANDBOX_MEMORY_LIMIT_MULT=4
 
-# Run on the head pod
 bash remote_agent/scripts/train_harbor_sweagent.sh [hydra overrides...]
 ```
 
 The script:
 - Sets `REMOTE_AGENT_ADVERTISED_HOST` to the head pod's IP (via `hostname -i`).
+  **Note**: the V1 `_ProxyTaskRunner` actor overrides this at runtime with
+  `ray.util.get_node_ip_address()` (the worker's IP), because the proxy runs
+  inside the TaskRunner actor on a worker node, not on the head.
 - Derives `MODEL_NAME` as `openai/$(basename $MODEL_PATH)` — the `openai/`
-  prefix is required because swe-agent uses litellm, which needs a provider
-  prefix to route to the proxy via `OPENAI_BASE_URL`.
+  prefix is required because swe-agent uses litellm.
 - Passes `advertised_host` via Hydra override (not env var) so Ray worker
   processes inherit it from the serialized config.
 - Passes `model_name` via `++` Hydra override (it's not in the yaml struct).
+
+**V1 TaskRunner**: upstream verl (≥ `535c4779`) uses `@ray.remote
+TaskRunnerV1` — the recipe defines `_ProxyTaskRunner` (a `@ray.remote` actor
+that replicates `TaskRunnerV1.run()` but injects `start_proxy_server`
+between `trainer.init()` and `trainer.fit()`). The recipe calls
+`run_ppo(config, task_runner_class=_ProxyTaskRunner)`. A `ray.init(address="auto")`
+is called before `run_ppo` to connect to the existing KubeRay cluster.
+
+**Shared PVC for harbor cache**: the V1 TaskRunner actor runs on a worker
+node, so `data.harbor_cache_dir` must point to a shared PVC path (not local
+filesystem). Example: `data.harbor_cache_dir=/mnt/data/.harbor_cache`.
 
 Common Hydra overrides for smoke tests:
 
@@ -436,7 +468,7 @@ After launch, check the training log at each stage:
 | Dataset materialized | `materialized dataset: train=...parquet val=...parquet` | Harbor runner built parquets from task dirs |
 | FSDP weights loaded | `Loading weights: 100%` | Actor model loaded on GPUs |
 | SGLang server ready | `Capturing num tokens` / `SGLang http server` | Rollout engine initialized |
-| Proxy started | `Proxy server started at http://<ip>:<port>` | OpenAI-compatible proxy is live |
+| Proxy started | `Proxy server actor created at http://<ip>:<port>` | OpenAI-compatible proxy is live (inside the TaskRunner actor) |
 | Rollout started | `Training Progress: 0%` | First step's rollout phase began |
 | LLM traffic | `[GENERATE] prompt_ids length=<n>` | swe-agent called the proxy; real LLM generation |
 | Trajectory rebuilt | `Successfully converted trajectory to ATIF format` | Harbor converted swe-agent's `.traj` to training format |
@@ -453,7 +485,12 @@ After launch, check the training log at each stage:
 | `BadRequestError: LLM Provider NOT provided` | litellm needs `openai/` prefix | Script prepends `openai/`; don't override with a bare model name |
 | `NonZeroAgentExitCodeError: exit 100/137` | Sandbox apt-get failed | Check sandbox pod resources; use `SANDBOX_MEMORY_LIMIT_MULT` to increase memory; verify sandbox image's apt sources are reachable |
 | `AttributeError: 'NoneType' object has no attribute 'to'` in flash_attention | transformers ≥ 5.6.0 bug | Pin `transformers<5.6.0` or patch `flash_attention.py` line 84 |
-| `Train dataloader is empty!` | Stale harbor parquet cache | Delete `~/.cache/verl/remote_agent/harbor/` or change `data.harbor_cache_dir` |
+| `ValueError: Total available GPUs 0` | `run_ppo` didn't connect to KubeRay cluster | Recipe calls `ray.init(address="auto")` before `run_ppo`; ensure head pod has `RAY_ADDRESS=127.0.0.1:6379` |
+| `MissingExtraError: The 'e2b' package is required` | `e2b` SDK not installed | `pip install e2b` in the image or on the pod |
+| `OSError: [Errno 107] Transport endpoint is not connected` | OSS FUSE mount dropped | Restart the pod or use a more stable storage backend |
+| `Connection error` from swe-agent (litellm) | `advertised_host` points to head, not worker | V1 TaskRunner overrides `advertised_host` at runtime; ensure the override is in `_ProxyTaskRunner.run()` |
+| `ReadTimeout` from E2B sandbox claim | SandboxSet replicas < concurrent tasks | Scale `SandboxSet.spec.replicas` to match `train_batch_size` |
+| `FileNotFoundError: ...harbor_cache/train-*.parquet` | V1 actor on different pod than driver | Set `data.harbor_cache_dir` to a shared PVC path |
 
 ---
 
@@ -488,9 +525,14 @@ schedules even when the head runs with `num-cpus: 0`.
 
 ## v1 limitations
 
-- **Proxy mode**: Ray-actor proxy only — the proxy runs as a named actor on the
-  trainer head node. There is no standalone/external proxy mode.
+- **Proxy mode**: Ray-actor proxy only — the proxy runs as a named actor
+  inside the `_ProxyTaskRunner` on a worker node. There is no
+  standalone/external proxy mode.
 - **Harbor runner**: local Trials only. A remote Harbor-HTTP runner (submitting
   trials to a separate Harbor service) is a planned follow-up.
-- **transformers compatibility**: requires `transformers < 5.6.0` or a
-  one-line patch to `flash_attention.py` (see [Verified against](#verified-against)).
+- **transformers compatibility**: requires `transformers < 5.6.0` (Dockerfile
+  pins this) or a one-line patch to `flash_attention.py`
+  (see [Verified against](#verified-against)).
+- **V1 TaskRunner**: upstream verl ≥ `535c4779` uses `@ray.remote TaskRunnerV1`;
+  the recipe's `_ProxyTaskRunner` adapts to this API. If upstream changes the
+  V1 `run()` method signature, the recipe must be updated accordingly.

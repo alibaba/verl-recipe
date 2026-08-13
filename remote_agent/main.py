@@ -95,6 +95,11 @@ def _run_ppo_with_proxy(config) -> None:
         use_critic=need_critic(config),
     )
 
+    # Connect to the existing KubeRay cluster before run_ppo tries ray.init().
+    # Without this, run_ppo may start a new local cluster with 0 GPUs.
+    if not ray.is_initialized():
+        ray.init(address="auto")
+
     # -- _ProxyTaskRunner: TaskRunnerV1 with proxy injection ----------------
     # Defined here (not at module level) so that @ray.remote is applied at
     # call time, after ray is available.
@@ -169,6 +174,10 @@ def _run_ppo_with_proxy(config) -> None:
                 from remote_agent.proxyserver.ray_actor import start_proxy_server
 
                 actor_ip = ray.util.get_node_ip_address()
+                # Override advertised_host with the actor's own IP — the proxy
+                # runs inside this TaskRunner actor (on a worker node), not on
+                # the head node where the script set REMOTE_AGENT_ADVERTISED_HOST.
+                config.actor_rollout_ref.rollout.remote_agent.proxy.advertised_host = actor_ip
                 load_balancer = self.trainer.llm_server_manager.global_load_balancer
                 proxy_url = start_proxy_server(
                     load_balancer=load_balancer,

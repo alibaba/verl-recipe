@@ -77,12 +77,15 @@ RUN pip install -e /workspace
 # 3. Harbor — agent execution framework (Trial, DockerEnvironment)
 #    Used by the harbor ExternalAgentRunner (local Trial mode).
 # ============================================================
-RUN pip install transformers==5.6.0
+RUN pip install "transformers<5.6.0"
 
 RUN git clone -b release-dev-e5e46809-rollout-server https://github.com/alibaba/harbor.git /tmp/harbor && \
     pip install --ignore-installed /tmp/harbor && \
     rm -rf /tmp/harbor && \
-    pip install kubernetes
+    pip install kubernetes kubernetes_asyncio e2b
+# NOTE: kubernetes_asyncio is required by harbor's ACKEnvironment;
+#       e2b is required by harbor's E2BEnvironment (sandbox-manager HTTP mode).
+#       kubernetes is for ACKEnvironment's direct K8s API access.
 # NOTE: v1 remote_agent defaults to DockerEnvironment, so the ACK-specific harbor
 #       overrides used by the old agentic image are NOT applied here. If you run
 #       on ACK or need the trial setup-timeout bump, re-add the corresponding
@@ -95,6 +98,21 @@ RUN git clone -b release-dev-e5e46809-rollout-server https://github.com/alibaba/
 # ============================================================
 COPY recipe/remote_agent /workspace/remote_agent
 RUN pip install shortuuid aiohttp
+
+# ============================================================
+# 4b. V1 TaskRunner dependencies + sitecustomize bootstrap
+# ============================================================
+# transfer_queue is required by verl's V1 TaskRunner (async rollout).
+# If not installed, the recipe's _ProxyTaskRunner skips tq.init/close,
+# but the V1 AgentLoopManagerTQ requires it directly.
+RUN pip install TransferQueue==0.1.8
+
+# sitecustomize.py is auto-imported by Python's site module at startup.
+# It installs the recipe's config-compat shim (making omega_conf_to_dataclass
+# tolerate the recipe-added rollout.remote_agent key) in every python process,
+# including Ray worker actors that don't inherit the driver's runtime_env hooks.
+# Must be at a PYTHONPATH top-level directory (we use /workspace, set below).
+RUN cp /workspace/remote_agent/compat/sitecustomize.py /workspace/sitecustomize.py
 
 ENV PYTHONPATH="/workspace:${PYTHONPATH}"
 ENV LOCAL_TEST=true

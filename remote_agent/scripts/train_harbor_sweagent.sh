@@ -49,6 +49,17 @@ if [ "${SANDBOX_MODE:-}" = "ack" ]; then
     actor_rollout_ref.rollout.remote_agent.runner.kwargs.environment_import_path="${ENV_IMPORT}"
     "++actor_rollout_ref.rollout.remote_agent.runner.kwargs.environment_kwargs={${KW}}"
   )
+elif [ "${SANDBOX_MODE:-}" = "e2b" ]; then
+  # E2B mode: sandboxes are claimed via HTTP from sandbox-manager/gateway.
+  # E2B_API_KEY / E2B_API_URL / E2B_SANDBOX_URL must be set as env vars.
+  SBX_SET="${SANDBOX_SET:-slime-sbx-astropy-14309}"
+  ENV_IMPORT="harbor.environments.e2b:E2BEnvironment"
+  KW="sandbox_set_name: ${SBX_SET}, override_claim_image: true"
+
+  ARGS+=(
+    actor_rollout_ref.rollout.remote_agent.runner.kwargs.environment_import_path="${ENV_IMPORT}"
+    "++actor_rollout_ref.rollout.remote_agent.runner.kwargs.environment_kwargs={${KW}}"
+  )
 fi
 
 exec python -m remote_agent.main "${ARGS[@]}" "$@"
