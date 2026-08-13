@@ -1,0 +1,77 @@
+# Two self-deployed SGLang instances, ONE pod each, 4 GPUs each, --tp 4.
+#
+# This is the clean multi-instance fan-out (vs. two servers in one 8-GPU pod):
+# each pod owns only its 4 GPUs (seen as 0-3), so no --base-gpu-id / gpu_offset
+# gymnastics. Each pod joins Ray with a DISTINCT custom resource so verl's
+# ReceiverCE actors land on the right pod (co-located with that SGLang's GPUs for
+# CUDA IPC). Both land on node 601 (4+4 = its 8 GPUs).
+#
+# Containers just sleep; ray + sglang + receivers are driven by kubectl exec.
+---
+apiVersion: v1
+kind: Pod
+metadata: { name: sglang-a, namespace: default, labels: { app: sglang-2pod } }
+spec:
+  nodeName: e01-cn-iaj4pmqd601
+  serviceAccountName: verl-agentic
+  imagePullSecrets: [{ name: regcred-cn-hangzhou }]
+  restartPolicy: Never
+  containers:
+  - name: sglang
+    image: registry-cn-hangzhou.ack.aliyuncs.com/dev/verl:2.47.1.sglmooncake.e531b5e1
+    imagePullPolicy: IfNotPresent
+    command: ["/bin/bash", "-c", "ulimit -n 65536; sleep infinity"]
+    env:
+    - { name: MOONCAKE_TE_META_DATA_SERVER, value: P2PHANDSHAKE }
+    - { name: MOONCAKE_PROTOCOL, value: tcp }
+    - { name: MOONCAKE_DEVICE, value: "" }
+    - { name: MOONCAKE_GLOBAL_SEGMENT_SIZE, value: "4294967296" }
+    - { name: RAY_EXPERIMENTAL_NOSET_CUDA_VISIBLE_DEVICES, value: "1" }
+    - { name: GLOO_SOCKET_IFNAME, value: eth0 }
+    - { name: NCCL_DEBUG, value: WARN }
+    resources:
+      limits: { cpu: "24", memory: 192Gi, nvidia.com/gpu: "4", rdma/hca: "4" }
+      requests: { cpu: "16", memory: 128Gi, nvidia.com/gpu: "4", rdma/hca: "4" }
+    volumeMounts:
+    - { mountPath: /dev/shm, name: shm }
+    - { mountPath: /mnt/models, name: ym-models }
+  tolerations:
+  - { effect: NoSchedule, key: nvidia.com/gpu, operator: Exists }
+  - { effect: NoSchedule, key: node-role.alibabacloud.com/lingjun, operator: Exists }
+  volumes:
+  - { name: shm, emptyDir: { medium: Memory, sizeLimit: 48Gi } }
+  - { name: ym-models, persistentVolumeClaim: { claimName: ym-models } }
+---
+apiVersion: v1
+kind: Pod
+metadata: { name: sglang-b, namespace: default, labels: { app: sglang-2pod } }
+spec:
+  nodeName: e01-cn-iaj4pmqd601
+  serviceAccountName: verl-agentic
+  imagePullSecrets: [{ name: regcred-cn-hangzhou }]
+  restartPolicy: Never
+  containers:
+  - name: sglang
+    image: registry-cn-hangzhou.ack.aliyuncs.com/dev/verl:2.47.1.sglmooncake.e531b5e1
+    imagePullPolicy: IfNotPresent
+    command: ["/bin/bash", "-c", "ulimit -n 65536; sleep infinity"]
+    env:
+    - { name: MOONCAKE_TE_META_DATA_SERVER, value: P2PHANDSHAKE }
+    - { name: MOONCAKE_PROTOCOL, value: tcp }
+    - { name: MOONCAKE_DEVICE, value: "" }
+    - { name: MOONCAKE_GLOBAL_SEGMENT_SIZE, value: "4294967296" }
+    - { name: RAY_EXPERIMENTAL_NOSET_CUDA_VISIBLE_DEVICES, value: "1" }
+    - { name: GLOO_SOCKET_IFNAME, value: eth0 }
+    - { name: NCCL_DEBUG, value: WARN }
+    resources:
+      limits: { cpu: "24", memory: 192Gi, nvidia.com/gpu: "4", rdma/hca: "4" }
+      requests: { cpu: "16", memory: 128Gi, nvidia.com/gpu: "4", rdma/hca: "4" }
+    volumeMounts:
+    - { mountPath: /dev/shm, name: shm }
+    - { mountPath: /mnt/models, name: ym-models }
+  tolerations:
+  - { effect: NoSchedule, key: nvidia.com/gpu, operator: Exists }
+  - { effect: NoSchedule, key: node-role.alibabacloud.com/lingjun, operator: Exists }
+  volumes:
+  - { name: shm, emptyDir: { medium: Memory, sizeLimit: 48Gi } }
+  - { name: ym-models, persistentVolumeClaim: { claimName: ym-models } }

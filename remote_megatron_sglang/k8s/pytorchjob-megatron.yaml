@@ -1,0 +1,88 @@
+# Megatron training cluster for the `megatron_sglang` remote backend.
+#
+# Deployed as a Kubeflow PyTorchJob (install the Kubeflow training-operator:
+#   https://github.com/kubeflow/training-operator ).
+# The operator injects MASTER_ADDR / MASTER_PORT / RANK / WORLD_SIZE into every
+# pod; train_server.py reads them, builds verl's MegatronEngine on every rank,
+# and rank 0 serves the HTTP contract (server/protocol.py).
+#
+# # VALIDATE: image, GPU/RDMA resources, node selectors, mcore version, and the
+# training config path are all cluster-specific.
+apiVersion: kubeflow.org/v1
+kind: PyTorchJob
+metadata:
+  name: megatron-train
+  namespace: verl
+spec:
+  pytorchReplicaSpecs:
+    Master:
+      replicas: 1
+      restartPolicy: OnFailure
+      template:
+        metadata:
+          annotations:
+            sidecar.istio.io/inject: "false"
+        spec:
+          containers:
+            - name: pytorch
+              image: verlai/verl:megatron   # VALIDATE: image with verl + megatron.core + mbridge
+              command: ["python", "-m", "recipe.remote_megatron_sglang.server.train_server"]
+              args: ["--config", "/config/megatron_train.yaml", "--port", "8000"]
+              ports:
+                - containerPort: 8000
+                  name: http-rl
+                - containerPort: 29500
+                  name: weight-sync   # cross-cluster NCCL broadcast group (nccl_http)
+              resources:
+                limits:
+                  nvidia.com/gpu: 8
+                  rdma/hca: 1          # VALIDATE: required for nccl_http / mooncake
+              volumeMounts:
+                - { name: config, mountPath: /config }
+                - { name: shared, mountPath: /mnt/shared }   # store transport (optional)
+          volumes:
+            - name: config
+              configMap: { name: megatron-train-config }
+            - name: shared
+              persistentVolumeClaim: { claimName: weight-sync-pvc }
+    Worker:
+      replicas: 3                      # WORLD_SIZE = (Master + Worker) * gpus; VALIDATE
+      restartPolicy: OnFailure
+      template:
+        metadata:
+          annotations:
+            sidecar.istio.io/inject: "false"
+        spec:
+          containers:
+            - name: pytorch
+              image: verlai/verl:megatron
+              command: ["python", "-m", "recipe.remote_megatron_sglang.server.train_server"]
+              args: ["--config", "/config/megatron_train.yaml", "--port", "8000"]
+              resources:
+                limits:
+                  nvidia.com/gpu: 8
+                  rdma/hca: 1
+              volumeMounts:
+                - { name: config, mountPath: /config }
+                - { name: shared, mountPath: /mnt/shared }
+          volumes:
+            - name: config
+              configMap: { name: megatron-train-config }
+            - name: shared
+              persistentVolumeClaim: { claimName: weight-sync-pvc }
+---
+# Stable Service the verl driver points `remote_backend.megatron_sglang.train_endpoint` at.
+# Selects the PyTorchJob's Master (rank 0), which is the only rank serving HTTP.
+apiVersion: v1
+kind: Service
+metadata:
+  name: megatron-train-master
+  namespace: verl
+spec:
+  selector:
+    training.kubeflow.org/job-name: megatron-train
+    training.kubeflow.org/replica-type: master
+    training.kubeflow.org/replica-index: "0"
+  ports:
+    - { name: http-rl, port: 8000, targetPort: 8000 }
+    - { name: weight-sync, port: 29500, targetPort: 29500 }

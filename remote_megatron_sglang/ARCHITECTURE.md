@@ -1,0 +1,93 @@
+# Architecture — `megatron_sglang` remote backend
+
+```mermaid
+flowchart TB
+    subgraph DRIVER["🖥️ verl driver — CPU-only, 0-GPU Ray pool"]
+        direction TB
+        RBT["RemoteBackendTrainer\n(RayPPOTrainer subclass)\nPPO/GRPO · data · advantage · reward · metrics"]
+        FWD["MegatronSGLangForwarderWorker\n(single CPU forwarder)\ninit_model · compute_log_prob · update_actor\nsave_checkpoint · update_weights"]
+        ADP["MegatronSGLangBackend (adapter)\nRemoteBackendRegistry['megatron_sglang']"]
+        TC["MegatronTrainClient (httpx)"]
+        IC["SGLangInferClient (httpx)"]
+        subgraph WS["weight_sync (pluggable · WeightSyncRegistry)"]
+            direction LR
+            T1["nccl_http\n(default)"]
+            T2["store"]
+            T3["mooncake"]
+        end
+        RBT --> FWD --> ADP
+        ADP --> TC
+        ADP --> IC
+        ADP --> WS
+    end
+
+    subgraph TRAIN["🅰️ Training cluster — Kubeflow PyTorchJob (GPUs)"]
+        direction TB
+        SVC1["Service: megatron-train-master:8000"]
+        subgraph PJ["PyTorchJob pods"]
+            direction LR
+            M0["Master / rank 0\ntrain_server.py (HTTP)\nrank-0 serves + broadcasts cmds"]
+            W1["Worker rank 1..N\n_follower_loop()"]
+        end
+        ENG["verl MegatronEngine\n(mcore GPTModel · AutoBridge/mbridge\nget_per_tensor_param · dist optimizer)"]
+        SVC1 --> M0
+        M0 -. "dist.broadcast_object_list (collective)" .- W1
+        M0 --> ENG
+        W1 --> ENG
+    end
+
+    subgraph INFER["🅱️ Inference cluster — RoleBasedGroup (GPUs)"]
+        direction TB
+        SVC2["Service: sglang-rbg-leader:30000"]
+        LEAD["SGLang leader (TP rank 0)\nOpenAI/generate + weight-update API"]
+        WORK["SGLang worker roles (TP shards)\nRBG service discovery + startup order"]
+        SVC2 --> LEAD
+        LEAD -. "tensor parallel" .- WORK
+    end
+
+    %% Control plane (HTTP/REST)
+    TC -- "HTTP: compute_log_prob / update_actor /\nsave_checkpoint / push_weights" --> SVC1
+    IC -- "HTTP: init_weights_update_group /\nupdate_weights_from_* / flush_cache" --> SVC2
+
+    %% Generation path (verl rollout via gateway_url)
+    RBT == "generation — rollout.gateway_url" ==> SVC2
+
+    %% Weight sync — direct, cluster-to-cluster (verl only triggers it)
+    ENG == "weight sync (NCCL broadcast / shared store / RDMA)\nMegatron ➜ SGLang, bytes never touch the driver" ==> LEAD
+
+    classDef driver fill:#e6f2ff,stroke:#3576c0,color:#0b2e59;
+    classDef train fill:#e9f7e9,stroke:#3a9d3a,color:#123d12;
+    classDef infer fill:#fff2e0,stroke:#d38b00,color:#5a3b00;
+    class DRIVER,RBT,FWD,ADP,TC,IC,WS,T1,T2,T3 driver;
+    class TRAIN,PJ,M0,W1,ENG,SVC1 train;
+    class INFER,LEAD,WORK,SVC2 infer;
+```
+
+## Per-step sequence
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant D as verl driver (fit loop)
+    participant F as CPU forwarder
+    participant M as Megatron PyTorchJob (train_server)
+    participant S as SGLang RoleBasedGroup
+
+    D->>S: generate rollouts (gateway_url)
+    S-->>D: responses
+    Note over D: reward · advantage (GAE/GRPO) — in verl
+    D->>F: compute_log_prob(batch) [mesh dispatch]
+    F->>M: HTTP /compute_log_prob (safetensors)
+    M-->>F: old_log_probs
+    D->>F: update_actor(batch)
+    F->>M: HTTP /update_actor
+    M-->>F: loss / grad-norm metrics
+    D->>F: update_weights()
+    F->>M: HTTP /push_weights (transport)
+    par direct cluster-to-cluster
+        M-->>S: NCCL broadcast / disk / RDMA weights
+    and
+        F->>S: /update_weights_from_distributed + /flush_cache
+    end
+    Note over D,S: repeat next step
+```

@@ -1,0 +1,527 @@
+# RayCluster CRD for verl fully disaggregated RL training + AI Gateway
+# Adapted for 2-GPU-node cluster (e01-cn-iaj4pmqd601/602, 8xH20 each)
+#
+# Changes from original:
+#   - Image: registry-cn-hangzhou.ack.aliyuncs.com/dev/verl:2.47.1.sglmooncake.f4551409
+#   - imagePullSecrets: regcred-cn-hangzhou
+#   - Removed nodeSelector (no verl.io/pool labels on nodes)
+#   - Reduced training-workers to 1 replica
+#   - Reduced rollout-workers to 1 replica
+#
+apiVersion: ray.io/v1
+kind: RayCluster
+metadata:
+  name: verl-disagg-mooncake
+  namespace: default
+  labels:
+    app: verl-disagg-mooncake
+spec:
+  rayVersion: "2.54.0"
+
+  # ================================================================
+  # Head Group: Ray driver + mooncake_master sidecar (no GPU)
+  # ================================================================
+  headGroupSpec:
+    rayStartParams:
+      dashboard-host: "0.0.0.0"
+      num-cpus: "0"
+      num-gpus: "0"
+      metrics-export-port: "8090"
+    template:
+      metadata:
+        labels:
+          app: verl-disagg-mooncake
+          role: head
+      spec:
+        imagePullSecrets:
+        - name: regcred-cn-hangzhou
+        serviceAccountName: verl-agentic
+        tolerations:
+        - key: "nvidia.com/gpu"
+          operator: "Exists"
+          effect: "NoSchedule"
+        - key: "node-role.alibabacloud.com/lingjun"
+          operator: "Exists"
+          effect: "NoSchedule"
+        containers:
+        - name: ray-head
+          image: registry-cn-hangzhou.ack.aliyuncs.com/dev/verl:2.47.1.sglmooncake.f4551409
+          imagePullPolicy: Always
+          env:
+          - name: RAY_raylet_start_wait_time_s
+            value: "300"
+          - name: MOONCAKE_MASTER
+            value: "127.0.0.1:50051"
+          - name: MOONCAKE_TE_META_DATA_SERVER
+            value: "P2PHANDSHAKE"
+          - name: MOONCAKE_PROTOCOL
+            value: "tcp"
+          - name: MOONCAKE_DEVICE
+            value: ""
+          - name: MOONCAKE_GLOBAL_SEGMENT_SIZE
+            value: "4294967296"
+          - name: NCCL_DEBUG
+            value: "WARN"
+          ports:
+          - containerPort: 6379
+            name: gcs-server
+          - containerPort: 8265
+            name: dashboard
+          - containerPort: 10001
+            name: client
+          resources:
+            limits:
+              cpu: "8"
+              memory: "16Gi"
+              rdma/hca: "1"
+            requests:
+              cpu: "2"
+              memory: "8Gi"
+              rdma/hca: "1"
+          volumeMounts:
+          - name: shm
+            mountPath: /dev/shm
+          - name: data
+            mountPath: /data
+          - name: ym-dataset
+            mountPath: /mnt/data
+          - name: ym-models
+            mountPath: /mnt/models
+
+        # --- Mooncake Master sidecar ---
+        - name: mooncake-master
+          image: registry-cn-hangzhou.ack.aliyuncs.com/dev/verl:2.47.1.sglmooncake.f4551409
+          imagePullPolicy: Always
+          command: ["mooncake_master"]
+          args: ["--port", "50051", "--enable_http_metadata_server=true"]
+          ports:
+          - containerPort: 50051
+            name: mc-master
+          resources:
+            limits:
+              cpu: "2"
+              memory: "4Gi"
+              rdma/hca: "1"
+            requests:
+              cpu: "1"
+              memory: "2Gi"
+              rdma/hca: "1"
+        volumes:
+        - name: shm
+          emptyDir:
+            medium: Memory
+            sizeLimit: "8Gi"
+        - name: data
+          emptyDir: {}
+        - name: ym-dataset
+          persistentVolumeClaim:
+            claimName: ym-dataset
+        - name: ym-models
+          persistentVolumeClaim:
+            claimName: ym-models
+
+  # ================================================================
+  # Worker Group 1: TRAINING nodes (all GPUs for Actor FSDP + Ref)
+  # ================================================================
+  workerGroupSpecs:
+  - groupName: training-workers
+    replicas: 1
+    minReplicas: 1
+    maxReplicas: 2
+    rayStartParams:
+      num-gpus: "8"
+    template:
+      metadata:
+        labels:
+          app: verl-disagg-mooncake
+          role: training-worker
+      spec:
+        imagePullSecrets:
+        - name: regcred-cn-hangzhou
+        serviceAccountName: verl-agentic
+        containers:
+        - name: ray-worker
+          image: registry-cn-hangzhou.ack.aliyuncs.com/dev/verl:2.47.1.sglmooncake.f4551409
+          imagePullPolicy: Always
+          env:
+          - name: MOONCAKE_MASTER
+            value: "verl-disagg-mooncake-head-svc:50051"
+          - name: MOONCAKE_TE_META_DATA_SERVER
+            value: "P2PHANDSHAKE"
+          - name: MOONCAKE_PROTOCOL
+            value: "tcp"
+          - name: MOONCAKE_DEVICE
+            value: ""
+          - name: MOONCAKE_GLOBAL_SEGMENT_SIZE
+            value: "4294967296"
+          # NCCL IPv6 RDMA env vars (Wulan cluster)
+          - name: NCCL_DEBUG
+            value: "INFO"
+          - name: NCCL_IB_ADDR_RANGE
+            value: "2001:db8:80f:e000::/60"
+          - name: NCCL_IB_ADDR_FAMILY
+            value: "AF_INET6"
+          - name: GLOO_SOCKET_IFNAME
+            value: "eth0"
+          - name: NCCL_NET_PLUGIN
+            value: "none"
+          - name: CUDA_DEVICE_MAX_CONNECTIONS
+            value: "1"
+          - name: RAY_memory_usage_threshold
+            value: "0.99"
+          - name: LOCAL_TEST
+            value: "true"
+          resources:
+            limits:
+              cpu: "64"
+              memory: "1500Gi"
+              nvidia.com/gpu: "8"
+              rdma/hca: "1"
+            requests:
+              cpu: "48"
+              memory: "1200Gi"
+              nvidia.com/gpu: "8"
+              rdma/hca: "1"
+          volumeMounts:
+          - name: shm
+            mountPath: /dev/shm
+          - name: data
+            mountPath: /data
+          - name: ym-dataset
+            mountPath: /mnt/data
+          - name: ym-models
+            mountPath: /mnt/models
+
+        volumes:
+        - name: shm
+          emptyDir:
+            medium: Memory
+            sizeLimit: "128Gi"
+        - name: data
+          emptyDir: {}
+        - name: ym-dataset
+          persistentVolumeClaim:
+            claimName: ym-dataset
+        - name: ym-models
+          persistentVolumeClaim:
+            claimName: ym-models
+        tolerations:
+        - key: "nvidia.com/gpu"
+          operator: "Exists"
+          effect: "NoSchedule"
+        - key: "node-role.alibabacloud.com/lingjun"
+          operator: "Exists"
+          effect: "NoSchedule"
+
+  # ================================================================
+  # Worker Group 2: ROLLOUT nodes (all GPUs for SGLang PD + Router)
+  # ================================================================
+  - groupName: rollout-workers
+    replicas: 1
+    minReplicas: 1
+    maxReplicas: 2
+    rayStartParams:
+      num-gpus: "8"
+    template:
+      metadata:
+        labels:
+          app: verl-disagg-mooncake
+          role: rollout-worker
+      spec:
+        imagePullSecrets:
+        - name: regcred-cn-hangzhou
+        serviceAccountName: verl-agentic
+        containers:
+        - name: ray-worker
+          image: registry-cn-hangzhou.ack.aliyuncs.com/dev/verl:2.47.1.sglmooncake.f4551409
+          imagePullPolicy: Always
+          env:
+          - name: MOONCAKE_MASTER
+            value: "verl-disagg-mooncake-head-svc:50051"
+          - name: MOONCAKE_TE_META_DATA_SERVER
+            value: "P2PHANDSHAKE"
+          - name: MOONCAKE_PROTOCOL
+            value: "tcp"
+          - name: MOONCAKE_DEVICE
+            value: ""
+          - name: MOONCAKE_GLOBAL_SEGMENT_SIZE
+            value: "4294967296"
+          # NCCL IPv6 RDMA env vars (Wulan cluster)
+          - name: NCCL_DEBUG
+            value: "INFO"
+          - name: NCCL_IB_ADDR_RANGE
+            value: "2001:db8:80f:e000::/60"
+          - name: NCCL_IB_ADDR_FAMILY
+            value: "AF_INET6"
+          - name: GLOO_SOCKET_IFNAME
+            value: "eth0"
+          - name: NCCL_NET_PLUGIN
+            value: "none"
+          - name: CUDA_DEVICE_MAX_CONNECTIONS
+            value: "1"
+          - name: RAY_memory_usage_threshold
+            value: "0.99"
+          - name: LOCAL_TEST
+            value: "true"
+          ports:
+          - containerPort: 30080
+            name: sglang-router
+          resources:
+            limits:
+              cpu: "64"
+              memory: "1024Gi"
+              nvidia.com/gpu: "8"
+              rdma/hca: "1"
+            requests:
+              cpu: "48"
+              memory: "768Gi"
+              nvidia.com/gpu: "8"
+              rdma/hca: "1"
+          volumeMounts:
+          - name: shm
+            mountPath: /dev/shm
+          - name: data
+            mountPath: /data
+          - name: ym-dataset
+            mountPath: /mnt/data
+          - name: ym-models
+            mountPath: /mnt/models
+
+        # --- Router Labeler Sidecar ---
+        - name: router-labeler
+          image: registry-cn-hangzhou.ack.aliyuncs.com/dev/kubectl:latest
+          imagePullPolicy: Always
+          command: ["/bin/sh", "/scripts/router-labeler.sh"]
+          env:
+          - name: POD_NAME
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.name
+          - name: NAMESPACE
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.namespace
+          - name: ROUTER_PORT
+            value: "30080"
+          - name: CHECK_INTERVAL
+            value: "5"
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "32Mi"
+            limits:
+              cpu: "100m"
+              memory: "64Mi"
+          volumeMounts:
+          - name: labeler-script
+            mountPath: /scripts
+
+        volumes:
+        - name: shm
+          emptyDir:
+            medium: Memory
+            sizeLimit: "128Gi"
+        - name: data
+          emptyDir: {}
+        - name: ym-dataset
+          persistentVolumeClaim:
+            claimName: ym-dataset
+        - name: ym-models
+          persistentVolumeClaim:
+            claimName: ym-models
+        - name: labeler-script
+          configMap:
+            name: verl-router-labeler-script
+            defaultMode: 0755
+        tolerations:
+        - key: "nvidia.com/gpu"
+          operator: "Exists"
+          effect: "NoSchedule"
+        - key: "node-role.alibabacloud.com/lingjun"
+          operator: "Exists"
+          effect: "NoSchedule"
+
+---
+# Service: mooncake_master + Ray head
+apiVersion: v1
+kind: Service
+metadata:
+  name: verl-disagg-mooncake-head-svc
+  namespace: default
+spec:
+  selector:
+    app: verl-disagg-mooncake
+    role: head
+  ports:
+  - name: mooncake-master
+    port: 50051
+    targetPort: 50051
+  - name: ray-dashboard
+    port: 8265
+    targetPort: 8265
+  - name: ray-gcs
+    port: 6379
+    targetPort: 6379
+  - name: ray-client
+    port: 10001
+    targetPort: 10001
+  type: ClusterIP
+
+---
+# Service: SGLang Router endpoints (for AI Gateway to discover)
+apiVersion: v1
+kind: Service
+metadata:
+  name: verl-sglang-router
+  namespace: default
+  labels:
+    app: verl-disagg-mooncake
+    component: sglang-router
+spec:
+  selector:
+    verl.io/has-router: "true"
+  ports:
+  - name: sglang-api
+    port: 30080
+    targetPort: 30080
+  type: ClusterIP
+
+---
+# RBAC: Allow router-labeler sidecar to patch its own pod's labels
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: verl-router-labeler
+  namespace: default
+  labels:
+    app: verl-disagg-mooncake
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: verl-router-labeler
+  namespace: default
+  labels:
+    app: verl-disagg-mooncake
+rules:
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "patch"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: verl-router-labeler
+  namespace: default
+  labels:
+    app: verl-disagg-mooncake
+subjects:
+- kind: ServiceAccount
+  name: verl-router-labeler
+  namespace: default
+roleRef:
+  kind: Role
+  name: verl-router-labeler
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# RBAC: Allow agentic recipe to create/manage sandbox pods via ACKEnvironment
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: verl-agentic
+  namespace: default
+  labels:
+    app: verl-disagg-mooncake
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: verl-agentic
+  namespace: default
+  labels:
+    app: verl-disagg-mooncake
+rules:
+- apiGroups: [""]
+  resources: ["pods", "pods/exec", "pods/log"]
+  verbs: ["get", "list", "create", "delete", "patch", "watch"]
+- apiGroups: [""]
+  resources: ["configmaps"]
+  verbs: ["get", "list", "create", "delete"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: verl-agentic
+  namespace: default
+  labels:
+    app: verl-disagg-mooncake
+subjects:
+- kind: ServiceAccount
+  name: verl-agentic
+  namespace: default
+- kind: ServiceAccount
+  name: default
+  namespace: default
+roleRef:
+  kind: Role
+  name: verl-agentic
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# ConfigMap: router-labeler script
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: verl-router-labeler-script
+  namespace: default
+  labels:
+    app: verl-disagg-mooncake
+data:
+  router-labeler.sh: |
+    #!/bin/sh
+    # Sidecar script: patches pod label when SGLang Router is healthy.
+    set -eu
+
+    ROUTER_PORT="${ROUTER_PORT:-30080}"
+    CHECK_INTERVAL="${CHECK_INTERVAL:-5}"
+    LABEL_KEY="verl.io/has-router"
+
+    labeled=false
+
+    echo "[router-labeler] Starting: watching localhost:${ROUTER_PORT}/health every ${CHECK_INTERVAL}s"
+
+    check_health() {
+      # Try curl first, fall back to wget, then /dev/tcp
+      if command -v curl > /dev/null 2>&1; then
+        curl -sf "http://localhost:${ROUTER_PORT}/health" > /dev/null 2>&1
+      elif command -v wget > /dev/null 2>&1; then
+        wget -q -O /dev/null "http://localhost:${ROUTER_PORT}/health" 2>/dev/null
+      else
+        # Fallback: try to open TCP connection
+        (echo > /dev/tcp/localhost/${ROUTER_PORT}) 2>/dev/null
+      fi
+    }
+
+    while true; do
+      if check_health; then
+        if [ "$labeled" != "true" ]; then
+          if kubectl label pod "$POD_NAME" "${LABEL_KEY}=true" --overwrite -n "$NAMESPACE"; then
+            labeled=true
+            echo "[router-labeler] Router healthy, labeled pod ${POD_NAME} with ${LABEL_KEY}=true"
+          fi
+        fi
+      else
+        if [ "$labeled" != "false" ]; then
+          if kubectl label pod "$POD_NAME" "${LABEL_KEY}-" -n "$NAMESPACE" 2>/dev/null; then
+            labeled=false
+            echo "[router-labeler] Router unhealthy, removed ${LABEL_KEY} from pod ${POD_NAME}"
+          fi
+        fi
+      fi
+      sleep "$CHECK_INTERVAL"
+    done

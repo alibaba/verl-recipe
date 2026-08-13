@@ -1,0 +1,137 @@
+# Standalone LLM Proxy Server for agentic RL training
+#
+# The proxy relays requests between the RemoteAgentLoop (running on
+# rollout workers) and the SGLang inference engine.  In standalone mode
+# it runs as its own Deployment so that sandbox pods (SWE-Agent) can
+# reach it via the stable Service name "llm-proxy-server".
+#
+# Deploy BEFORE the RayCluster:
+#   kubectl apply -f llm-proxy-server.yaml
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: llm-proxy-config
+  namespace: default
+  labels:
+    app.kubernetes.io/name: llm-proxy-server
+    app.kubernetes.io/component: proxy
+data:
+  PROXY_HOST: "0.0.0.0"
+  PROXY_PORT: "8080"
+  RELAY_TIMEOUT: "300"
+  LOG_LEVEL: "INFO"
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: llm-proxy-server
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: llm-proxy-server
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: llm-proxy-server
+        app.kubernetes.io/component: proxy
+    spec:
+      imagePullSecrets:
+      - name: regcred-cn-hangzhou
+      terminationGracePeriodSeconds: 30
+      containers:
+      - name: proxy
+        image: registry-cn-hangzhou.ack.aliyuncs.com/dev/verl-proxy-server:2.47.1.6771f4ac
+        imagePullPolicy: IfNotPresent
+        args:
+        - --debug
+        - --host
+        - $(PROXY_HOST)
+        - --port
+        - $(PROXY_PORT)
+        - --relay-timeout
+        - $(RELAY_TIMEOUT)
+        - --log-level
+        - $(LOG_LEVEL)
+        - --persist-dir
+        - /data/sessions
+        - --dump-dir
+        - /data/completed
+        volumeMounts:
+        - name: session-data
+          mountPath: /data
+        env:
+        - name: PROXY_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: llm-proxy-config
+              key: PROXY_HOST
+        - name: PROXY_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: llm-proxy-config
+              key: PROXY_PORT
+        - name: RELAY_TIMEOUT
+          valueFrom:
+            configMapKeyRef:
+              name: llm-proxy-config
+              key: RELAY_TIMEOUT
+        - name: LOG_LEVEL
+          valueFrom:
+            configMapKeyRef:
+              name: llm-proxy-config
+              key: LOG_LEVEL
+        ports:
+        - name: http
+          containerPort: 8080
+          protocol: TCP
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 3
+          periodSeconds: 10
+          timeoutSeconds: 3
+          failureThreshold: 2
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 5
+          periodSeconds: 15
+          timeoutSeconds: 5
+          failureThreshold: 3
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: "1"
+            memory: 512Mi
+      volumes:
+      - name: session-data
+        emptyDir: {}
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: llm-proxy-server
+  namespace: default
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: llm-proxy-server
+  ports:
+  - name: http
+    port: 80
+    protocol: TCP
+    targetPort: http

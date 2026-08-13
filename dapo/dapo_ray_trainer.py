@@ -40,6 +40,7 @@ from verl.trainer.ppo.reward import extract_reward
 from verl.utils.checkpoint.checkpoint_manager import should_save_ckpt_esi
 from verl.utils.metric import reduce_metrics
 from verl.utils.profiler import marked_timer
+from verl.utils.rollout_skip import RolloutSkip
 
 
 class RayDAPOTrainer(RayPPOTrainer):
@@ -113,6 +114,10 @@ class RayDAPOTrainer(RayPPOTrainer):
             logger.log(data=val_metrics, step=self.global_steps)
             if self.config.trainer.get("val_only", False):
                 return
+
+        if self.config.actor_rollout_ref.rollout.get("skip_rollout", False):
+            rollout_skip = RolloutSkip(self.config, self.async_rollout_manager)
+            rollout_skip.wrap_generate_sequences()
 
         # add tqdm
         progress_bar = tqdm(total=self.total_training_steps, initial=self.global_steps, desc="Training Progress")
@@ -324,10 +329,6 @@ class RayDAPOTrainer(RayPPOTrainer):
                         batch, is_metrics = compute_rollout_correction_and_add_to_batch(batch, rollout_corr_config)
                         # IS and off-policy metrics already have rollout_corr/ prefix
                         metrics.update(is_metrics)
-                        # add diff of probs too.
-                        from verl.utils.debug.metrics import calculate_debug_metrics
-
-                        metrics.update(calculate_debug_metrics(batch))
 
                     with marked_timer("adv", timing_raw, "brown"):
                         # compute advantages, executed on the driver process

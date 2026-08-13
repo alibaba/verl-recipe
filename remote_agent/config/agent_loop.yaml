@@ -1,0 +1,10 @@
+# Agent loop registration for the remote_agent recipe.
+#
+# Consumed by verl via
+#   actor_rollout_ref.rollout.agent.agent_loop_config_path
+# (defaulted in config/remote_agent_trainer.yaml). verl loads this file in every
+# AgentLoopWorker and puts the entry straight into its agent-loop registry, so
+# the class is resolved lazily by hydra — no recipe import is needed in the
+# worker process beforehand.
+- name: remote_agent
+  _target_: remote_agent.agent_loop.remote_agent_loop.RemoteAgentLoop

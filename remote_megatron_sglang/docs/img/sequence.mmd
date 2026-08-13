@@ -1,0 +1,24 @@
+sequenceDiagram
+    autonumber
+    participant D as verl driver (fit loop)
+    participant F as CPU forwarder
+    participant M as Megatron PyTorchJob (train_server)
+    participant S as SGLang RoleBasedGroup
+
+    D->>S: generate rollouts (gateway_url)
+    S-->>D: responses
+    Note over D: reward · advantage (GAE/GRPO) — in verl
+    D->>F: compute_log_prob(batch) [mesh dispatch]
+    F->>M: HTTP /compute_log_prob (safetensors)
+    M-->>F: old_log_probs
+    D->>F: update_actor(batch)
+    F->>M: HTTP /update_actor
+    M-->>F: loss / grad-norm metrics
+    D->>F: update_weights()
+    F->>M: HTTP /push_weights (transport)
+    par direct cluster-to-cluster
+        M-->>S: NCCL broadcast / disk / RDMA weights
+    and
+        F->>S: /update_weights_from_distributed + /flush_cache
+    end
+    Note over D,S: repeat next step

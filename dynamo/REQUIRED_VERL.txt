@@ -1,5 +1,0 @@
-# Dynamo ThunderAgent — tested core verl commit
-UPSTREAM=https://github.com/verl-project/verl.git
-MODE=pinned_commit
-COMMIT=d82d2777b5dc3e96a8a45168d02660312707ab98
-PIP_INSTALL=pip install verl@git+https://github.com/verl-project/verl.git@d82d2777b5dc3e96a8a45168d02660312707ab98

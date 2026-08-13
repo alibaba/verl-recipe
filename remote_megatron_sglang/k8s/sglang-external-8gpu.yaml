@@ -1,0 +1,80 @@
+# Standalone (self-deployed) SGLang for the 2-instance TP=4 host-memory test.
+#
+# NOT launched by verl. One 8-GPU pod on node 601 runs TWO SGLang servers:
+#   server A: Qwen3.6-27B, --tp 4 --base-gpu-id 0 --port 30000  (physical GPU 0-3)
+#   server B: Qwen3.6-27B, --tp 4 --base-gpu-id 4 --port 30001  (physical GPU 4-7)
+# A Ray worker (resource sglang_node) is started in the same container so verl's
+# ReceiverCE actors can be co-scheduled here and push weights via CUDA IPC. The
+# receivers land their Mooncake RDMA buffers in HOST memory (recv_device=cpu),
+# so a raised --mem-fraction-static (0.85) no longer OOMs them.
+#
+# The container just sleeps; we drive ray + sglang + receivers by kubectl exec.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: sglang-external
+  namespace: default
+  labels:
+    app: sglang-external
+spec:
+  nodeName: e01-cn-iaj4pmqd601
+  serviceAccountName: verl-agentic
+  imagePullSecrets:
+  - name: regcred-cn-hangzhou
+  restartPolicy: Never
+  containers:
+  - name: sglang
+    image: registry-cn-hangzhou.ack.aliyuncs.com/dev/verl:2.47.1.sglmooncake.e531b5e1
+    imagePullPolicy: IfNotPresent
+    command: ["/bin/bash", "-c", "ulimit -n 65536; sleep infinity"]
+    env:
+    - name: MOONCAKE_TE_META_DATA_SERVER
+      value: P2PHANDSHAKE
+    - name: MOONCAKE_PROTOCOL
+      value: tcp
+    - name: MOONCAKE_DEVICE
+      value: ""
+    - name: MOONCAKE_GLOBAL_SEGMENT_SIZE
+      value: "4294967296"
+    - name: RAY_EXPERIMENTAL_NOSET_CUDA_VISIBLE_DEVICES
+      value: "1"
+    - name: GLOO_SOCKET_IFNAME
+      value: eth0
+    - name: NCCL_DEBUG
+      value: WARN
+    # NCCL RoCEv2/IPv6 env so cross-node NCCL (this pod <-> trainer node) works,
+    # making the `nccl` checkpoint-engine backend available (not just mooncake).
+    # Matches the training worker's pod env. NCCL auto-selects the correct GID per
+    # node from NCCL_IB_ADDR_RANGE — do NOT pin NCCL_IB_GID_INDEX (trainer=GID 7,
+    # this pod=GID 11; a forced index breaks the rendezvous).
+    - name: NCCL_IB_ADDR_FAMILY
+      value: AF_INET6
+    - name: NCCL_IB_ADDR_RANGE
+      value: "2001:db8:80f:e000::/60"
+    - name: NCCL_NET_PLUGIN
+      value: none
+    - name: NCCL_SOCKET_IFNAME
+      value: eth0
+    resources:
+      limits:
+        cpu: "48"
+        memory: 384Gi
+        nvidia.com/gpu: "8"
+        rdma/hca: "8"
+      requests:
+        cpu: "32"
+        memory: 256Gi
+        nvidia.com/gpu: "8"
+        rdma/hca: "8"
+    volumeMounts:
+    - { mountPath: /dev/shm, name: shm }
+    - { mountPath: /mnt/models, name: ym-models }
+  tolerations:
+  - { effect: NoSchedule, key: nvidia.com/gpu, operator: Exists }
+  - { effect: NoSchedule, key: node-role.alibabacloud.com/lingjun, operator: Exists }
+  volumes:
+  - name: shm
+    emptyDir: { medium: Memory, sizeLimit: 96Gi }
+  - name: ym-models
+    persistentVolumeClaim:
+      claimName: ym-models

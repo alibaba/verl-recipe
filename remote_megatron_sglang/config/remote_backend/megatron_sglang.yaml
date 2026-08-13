@@ -1,0 +1,49 @@
+# Config for the `megatron_sglang` remote backend.
+#
+# This file lives in the `remote_backend/` config group. It OVERRIDES the
+# optional default in ppo_trainer.yaml (`optional remote_backend@remote_backend:
+# null`) when you pass `remote_backend=megatron_sglang` (no `+` — the group is
+# already declared). The backend adapter reads `remote_backend.megatron_sglang`.
+#
+# Make it discoverable by adding this recipe's config dir to the Hydra search
+# path (NOT --config-path, which would replace verl's primary config):
+#   python -m verl.trainer.main_ppo \
+#     hydra.searchpath='[file://recipe/remote_megatron_sglang/config]' \
+#     remote_backend=megatron_sglang ...
+# See train_gsm8k_remote.sh.
+
+megatron_sglang:
+
+  # HTTP endpoint of the Megatron train server (rank-0 Service of the PyTorchJob).
+  train_endpoint: http://megatron-train-master:8000
+  train_timeout: 3600.0
+
+  # SGLang HTTP endpoints for weight-update ops (one per TP-leader server, or the
+  # RBG leader). Generation is routed separately via rollout.gateway_url.
+  sglang_endpoints:
+    - http://sglang-rbg-leader:30000
+  infer_timeout: 1800.0
+
+  # Where the train server writes checkpoints (server-side path or shared store).
+  checkpoint_dir: checkpoints/megatron_sglang
+
+  # Pluggable weight-sync transport. transport ∈ {nccl_http, store, mooncake}.
+  weight_sync:
+    transport: nccl_http
+
+    # --- nccl_http / mooncake: cross-cluster rendezvous ---
+    # master_addr must be reachable from BOTH clusters (usually the Megatron
+    # master Service). group_world_size = #Megatron broadcast ranks + #SGLang TP
+    # workers. # VALIDATE against your topology.
+    master_addr: megatron-train-master
+    master_port: 29500
+    group_world_size: 2
+    nccl_backend: nccl
+
+    # --- store transport ---
+    # Shared URI both clusters can read/write (HDFS/S3/PVC).
+    store_uri: null
+
+    # --- mooncake transport ---
+    mooncake_metadata_server: null
+    mooncake_session_id: verl-remote-megatron-sglang

@@ -1,0 +1,65 @@
+# Standalone (self-deployed) SGLang instance for the external weight-sync test.
+#
+# NOT launched by verl. Serves Qwen2.5-3B-Instruct on 1 GPU (TP=1) at :30000.
+# A Mooncake weight-sync receiver is run as a second PROCESS inside this same
+# container (via `kubectl exec`), so it shares the GPU + IPC namespace with
+# SGLang and can push weights in via CUDA IPC (`/update_weights_from_tensor`).
+#
+# The container just sleeps; we drive sglang + receiver by exec for full control.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: sglang-external
+  namespace: default
+  labels:
+    app: sglang-external
+spec:
+  # Land on the node whose GPUs were freed by scaling rollout-workers to 0.
+  nodeName: e01-cn-iaj4pmqd601
+  serviceAccountName: verl-agentic
+  imagePullSecrets:
+  - name: regcred-cn-hangzhou
+  restartPolicy: Never
+  containers:
+  - name: sglang
+    image: registry-cn-hangzhou.ack.aliyuncs.com/dev/verl:2.47.1.sglmooncake.e531b5e1
+    imagePullPolicy: IfNotPresent
+    command: ["/bin/bash", "-c", "ulimit -n 65536; sleep infinity"]
+    env:
+    - name: MOONCAKE_TE_META_DATA_SERVER
+      value: P2PHANDSHAKE
+    - name: MOONCAKE_PROTOCOL
+      value: tcp
+    - name: MOONCAKE_DEVICE
+      value: ""
+    - name: MOONCAKE_GLOBAL_SEGMENT_SIZE
+      value: "4294967296"
+    - name: RAY_EXPERIMENTAL_NOSET_CUDA_VISIBLE_DEVICES
+      value: "1"
+    - name: GLOO_SOCKET_IFNAME
+      value: eth0
+    - name: NCCL_DEBUG
+      value: WARN
+    resources:
+      limits:
+        cpu: "16"
+        memory: 128Gi
+        nvidia.com/gpu: "2"
+        rdma/hca: "1"
+      requests:
+        cpu: "8"
+        memory: 64Gi
+        nvidia.com/gpu: "2"
+        rdma/hca: "1"
+    volumeMounts:
+    - { mountPath: /dev/shm, name: shm }
+    - { mountPath: /mnt/models, name: ym-models }
+  tolerations:
+  - { effect: NoSchedule, key: nvidia.com/gpu, operator: Exists }
+  - { effect: NoSchedule, key: node-role.alibabacloud.com/lingjun, operator: Exists }
+  volumes:
+  - name: shm
+    emptyDir: { medium: Memory, sizeLimit: 32Gi }
+  - name: ym-models
+    persistentVolumeClaim:
+      claimName: ym-models

@@ -1,0 +1,83 @@
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: ym-dataset
+  labels:
+    alicloud-pvname: ym-dataset
+spec:
+  capacity:
+    storage: 20Gi
+  accessModes:
+    - ReadWriteMany
+  persistentVolumeReclaimPolicy: Retain
+  csi:
+    driver: ossplugin.csi.alibabacloud.com
+    volumeHandle: ym-dataset # 需要和PV名字一致。
+    # nodePublishSecretRef:
+    #   name: yueming-oss
+    #   namespace: default
+    volumeAttributes:
+      bucket: "yueming-wulan-data-models" #替换为实际Bucket名称。
+      url: "oss-cn-wulanchabu-internal.aliyuncs.com"
+      otherOpts: "-o umask=022 -o max_stat_cache_size=100000 -o allow_other -o dbglevel=debug -o curldbg"
+      path: "/data"
+      # rrsa config
+      assumeRoleArn: acs:ram::1605956643380684:role/bingyu-oss-reader1
+      authType: "rrsa"
+      roleName: "yueming-c9a76ade617fa45a1a5c53684c2df237c"
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ym-dataset
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 20Gi
+  selector:
+    matchLabels:
+      alicloud-pvname: ym-dataset
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: ym-models
+  labels:
+    alicloud-pvname: ym-models
+spec:
+  capacity:
+    storage: 20Gi
+  accessModes:
+    - ReadWriteMany
+  persistentVolumeReclaimPolicy: Retain
+  csi:
+    driver: ossplugin.csi.alibabacloud.com
+    volumeHandle: ym-models # 需要和PV名字一致。
+    # nodePublishSecretRef:
+    #   name: yueming-oss
+    #   namespace: default
+    volumeAttributes:
+      bucket: "yueming-wulan-data-models" #替换为实际Bucket名称。
+      url: "oss-cn-wulanchabu-internal.aliyuncs.com"
+      otherOpts: "-o umask=022 -o max_stat_cache_size=100000 -o allow_other -o dbglevel=debug -o curldbg"
+      path: "/models"
+      # rrsa config
+      assumeRoleArn: acs:ram::1605956643380684:role/bingyu-oss-reader1
+      authType: "rrsa"
+      roleName: "yueming-c9a76ade617fa45a1a5c53684c2df237c"
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ym-models
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 20Gi
+  selector:
+    matchLabels:
+      alicloud-pvname: ym-models

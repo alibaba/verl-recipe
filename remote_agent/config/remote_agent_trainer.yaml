@@ -1,0 +1,54 @@
+hydra:
+  searchpath:
+    - file://verl/trainer/config
+defaults:
+  - ppo_trainer
+  - _self_
+
+actor_rollout_ref:
+  rollout:
+    name: sglang
+    mode: async
+    log_prob_micro_batch_size_per_gpu: 1
+    agent:
+      default_agent_loop: remote_agent
+      # Registers RemoteAgentLoop in every AgentLoopWorker (resolved relative to
+      # the verl project root, i.e. the dir containing both verl/ and
+      # remote_agent/). Keep in sync with config/agent_loop.yaml.
+      agent_loop_config_path: remote_agent/config/agent_loop.yaml
+    remote_agent:
+      proxy:
+        advertised_host: "0.0.0.0"   # override with the externally-reachable host
+        port: 0
+        tool_format: hermes
+      retry:
+        max_retries: 3
+        retry_base_delay: 1.0
+        poll_interval: 2.0
+      task_path:
+        roots: []
+        template: "{instance_id}"
+      runner:
+        name: harbor
+        kwargs:
+          agent_name: swe-agent
+          environment_import_path: "harbor.environments.docker.docker:DockerEnvironment"
+
+  # Micro-batch sizes required by verl validate_config; default to 1 (safe for
+  # small models / smoke tests — raise for throughput).
+  actor:
+    ppo_micro_batch_size_per_gpu: 1
+  ref:
+    log_prob_micro_batch_size_per_gpu: 1
+
+# GRPO does not use a critic, but validate_config still requires a model path.
+# Point it at the actor model by default.
+critic:
+  model:
+    path: ${actor_rollout_ref.model.path}
+  ppo_micro_batch_size_per_gpu: 1
+
+data:
+  train_harbor_dir: null
+  val_harbor_dir: null
+  harbor_cache_dir: "~/.cache/verl/remote_agent/harbor"

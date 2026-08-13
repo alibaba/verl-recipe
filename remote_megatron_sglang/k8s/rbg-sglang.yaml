@@ -1,0 +1,84 @@
+# SGLang inference cluster for the `megatron_sglang` remote backend.
+#
+# Deployed as a RoleBasedGroup (RBG) — an API for orchestrating multi-role
+# distributed inference workloads with cross-role service discovery, well suited
+# to SGLang leader/worker (TP) or disaggregated prefill/decode topologies.
+#   Project: https://github.com/AliyunContainerService/rolebasedgroup
+#
+# # VALIDATE: apiVersion/kind and the exact spec fields against the RBG CRD
+# version you install (`kubectl get crd | grep rolebasedgroup`). The shape below
+# reflects the RBG "multirole template + per-role workload" model.
+apiVersion: workloads.x-k8s.io/v1alpha1
+kind: RoleBasedGroup
+metadata:
+  name: sglang-rbg
+  namespace: verl
+spec:
+  roles:
+    # ---- Leader: SGLang TP rank 0; serves generation + weight-update HTTP ----
+    - name: leader
+      replicas: 1
+      workload:
+        apiVersion: apps/v1
+        kind: StatefulSet
+      template:
+        spec:
+          containers:
+            - name: sglang
+              image: lmsysorg/sglang:latest   # VALIDATE version supports the weight-update endpoints
+              command: ["python", "-m", "sglang.launch_server"]
+              args:
+                - "--model-path=/models/policy"
+                - "--tp-size=4"
+                - "--host=0.0.0.0"
+                - "--port=30000"
+                # Enable distributed weight update so /update_weights_from_distributed works.
+                - "--enable-update-weights"        # VALIDATE flag name for your SGLang build
+              ports:
+                - { containerPort: 30000, name: http }
+                - { containerPort: 29500, name: weight-sync }
+              resources:
+                limits:
+                  nvidia.com/gpu: 4
+                  rdma/hca: 1                      # VALIDATE: required for nccl_http / mooncake
+    # ---- Workers: remaining TP shards, discovered by the leader via RBG ----
+    - name: worker
+      replicas: 1
+      dependencies: ["leader"]                     # RBG role startup ordering (v1alpha1 field)
+      workload:
+        apiVersion: apps/v1
+        kind: StatefulSet
+      template:
+        spec:
+          containers:
+            - name: sglang
+              image: lmsysorg/sglang:latest
+              command: ["python", "-m", "sglang.launch_server"]
+              args:
+                - "--model-path=/models/policy"
+                - "--tp-size=4"
+                - "--host=0.0.0.0"
+                - "--port=30000"
+              resources:
+                limits:
+                  nvidia.com/gpu: 4
+                  rdma/hca: 1
+---
+# Service exposing SGLang generation + weight-update endpoints.
+# - remote_backend.megatron_sglang.sglang_endpoints -> this Service (weight ops)
+# - actor_rollout_ref.rollout.gateway_url            -> this Service (generation)
+apiVersion: v1
+kind: Service
+metadata:
+  name: sglang-rbg-leader
+  namespace: verl
+spec:
+  # RBG labels pods with rbg.workloads.x-k8s.io/{group-name,role-name}
+  # (group-name == the RoleBasedGroup metadata.name). Verified against the
+  # rbgs controller on the live cluster.
+  selector:
+    rbg.workloads.x-k8s.io/group-name: sglang-rbg
+    rbg.workloads.x-k8s.io/role-name: leader
+  ports:
+    - { name: http, port: 30000, targetPort: 30000 }
+    - { name: weight-sync, port: 29500, targetPort: 29500 }
