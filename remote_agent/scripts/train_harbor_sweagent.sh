@@ -63,13 +63,3 @@ elif [ "${SANDBOX_MODE:-}" = "e2b" ]; then
 fi
 
 exec python -m remote_agent.main "${ARGS[@]}" "$@"
-#!/usr/bin/env bash
-set -euo pipefail
-: "${MODEL_PATH:?set MODEL_PATH to a HF model dir}"
-export REMOTE_AGENT_ADVERTISED_HOST="${REMOTE_AGENT_ADVERTISED_HOST:-$(hostname -i | awk '{print $1}')}"
-python -m remote_agent.main \
-  actor_rollout_ref.model.path="${MODEL_PATH}" \
-  actor_rollout_ref.rollout.remote_agent.runner.name=harbor \
-  data.train_harbor_dir="${TRAIN_TASKS:-/data/tasks/train}" \
-  data.val_harbor_dir="${VAL_TASKS:-/data/tasks/val}" \
-  "$@"

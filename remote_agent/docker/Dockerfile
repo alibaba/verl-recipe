@@ -74,6 +74,16 @@ COPY setup.py pyproject.toml README.md /workspace/
 RUN pip install -e /workspace
 
 # ============================================================
+# 2d. Patch V1 trainer _compute_metrics for None tags
+#     PPOTrainer._compute_metrics accesses batch.tags[i]["min_global_steps"]
+#     and batch.tags[i]["max_global_steps"] with dtype=int, which fails when
+#     the value is None (remote_agent trajectories don't always set these).
+#     We patch the source at build-time so no runtime monkey-patch is needed.
+# ============================================================
+RUN sed -i 's/tag\["min_global_steps"\]/tag.get("min_global_steps") or 0/g; s/tag\["max_global_steps"\]/tag.get("max_global_steps") or 0/g' \
+    /workspace/verl/trainer/ppo/v1/trainer_base.py
+
+# ============================================================
 # 3. Harbor — agent execution framework (Trial, DockerEnvironment)
 #    Used by the harbor ExternalAgentRunner (local Trial mode).
 # ============================================================

@@ -189,6 +189,10 @@ def _run_ppo_with_proxy(config) -> None:
                 print(f"Proxy server started at {proxy_url} (actor ip {actor_ip})")
                 # ----- end injection -----
 
+                # Note: V1 trainer _compute_metrics None-tags patch is applied
+                # at build-time in the Dockerfile via sed on trainer_base.py.
+                # No runtime monkey-patch needed.
+
                 self.init_agent_loop_manager()
                 self.trainer.fit(self.agent_loop_manager)
                 succeeded = True

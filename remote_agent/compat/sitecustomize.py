@@ -7,11 +7,13 @@
 # WorkerDicts (verl/single_controller/ray/base.py), which drops the job-level
 # `worker_process_setup_hooks` that main.py registers.
 #
-# Its only job is to install the config-compat shim (see remote_agent/compat)
-# when verl.utils.config is first imported, so core verl config conversion
-# tolerates the recipe-added actor_rollout_ref.rollout.remote_agent section.
-# Agent-loop registration is *not* handled here: it goes through verl's own
-# `rollout.agent.agent_loop_config_path` (see config/agent_loop.yaml).
+# Its job is:
+#  1. Install the config-compat shim when verl.utils.config is imported,
+#     so omega_conf_to_dataclass tolerates the recipe-added
+#     rollout.remote_agent section.
+#
+# Note: V1 trainer _compute_metrics None-tags patch is done at build-time
+# in the Dockerfile via sed, so no runtime monkey-patch is needed here.
 #
 # The hook is lazy (a sys.meta_path finder) and stays side-effect free for
 # processes that never import verl.
