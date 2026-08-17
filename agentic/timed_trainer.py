@@ -187,7 +187,7 @@ class TimedOneStepOffRayTrainer(OneStepOffRayTrainer):
         # Convert numpy int64/float64 to native Python types for JSON serialization
         phase_durations = None
         if self.timing_raw:
-            phase_durations = {k: float(v) if hasattr(v, 'item') else v for k, v in self.timing_raw.items()}
+            phase_durations = {k: float(v) if hasattr(v, "item") else v for k, v in self.timing_raw.items()}
         td = self._timing_data
         timing_record = {
             "epoch": int(self.epoch),
@@ -221,7 +221,9 @@ class TimedOneStepOffRayTrainer(OneStepOffRayTrainer):
 
         # Send to proxy (fire-and-forget, don't block training)
         self._last_timing_task = asyncio.create_task(self._send_training_timing(timing_record))
-        self._last_timing_task.add_done_callback(lambda t: t.exception() if not t.cancelled() and not t.done() else None)
+        self._last_timing_task.add_done_callback(
+            lambda t: t.exception() if not t.cancelled() and not t.done() else None
+        )
 
         return result
 

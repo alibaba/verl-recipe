@@ -95,9 +95,7 @@ class SGLangInferClient:
         return await self._post_all("/destroy_weights_update_group", {})
 
     async def init_mooncake(self, metadata_server: str, session_id: str) -> dict[str, Any]:
-        return await self._post_all(
-            "/init_mooncake", {"metadata_server": metadata_server, "session_id": session_id}
-        )
+        return await self._post_all("/init_mooncake", {"metadata_server": metadata_server, "session_id": session_id})
 
     async def destroy_mooncake(self, session_id: str) -> dict[str, Any]:
         return await self._post_all("/destroy_mooncake", {"session_id": session_id})

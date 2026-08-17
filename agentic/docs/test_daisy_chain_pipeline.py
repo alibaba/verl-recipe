@@ -60,6 +60,7 @@ if not torch.cuda.is_available() or torch.cuda.device_count() < 3:
 
 # ─── Helpers ─────────────────────────────────────────────────────────────────
 
+
 def _magic_tensor(device):
     return torch.tensor(MAGIC_BYTES, dtype=torch.uint8, device=device)
 
@@ -75,14 +76,15 @@ def _hex4(lst):
 
 # ─── Simple point-to-point messaging over TCPStore ──────────────────────────
 
+
 class StoreMessenger:
     """send_obj / recv_obj over dist.TCPStore, mimicking StatelessProcessGroup."""
 
     def __init__(self, store, rank):
         self._store = store
         self._rank = rank
-        self._send_seq = {}   # dst -> counter
-        self._recv_seq = {}   # src -> counter
+        self._send_seq = {}  # dst -> counter
+        self._recv_seq = {}  # src -> counter
 
     def send_obj(self, obj, dst: int):
         seq = self._send_seq.get(dst, 0)
@@ -93,12 +95,13 @@ class StoreMessenger:
     def recv_obj(self, src: int):
         seq = self._recv_seq.get(src, 0)
         key = f"msg_{src}_{self._rank}_{seq}"
-        data = self._store.get(key)          # blocks until key exists
+        data = self._store.get(key)  # blocks until key exists
         self._recv_seq[src] = seq + 1
         return pickle.loads(bytes(data))
 
 
 # ─── Mooncake setup ──────────────────────────────────────────────────────────
+
 
 def init_mooncake(rank, bucket_size, device):
     """Initialize TransferEngine, allocate and register buffers."""
@@ -106,6 +109,7 @@ def init_mooncake(rank, bucket_size, device):
     hostname = os.environ.get("HOSTNAME", "127.0.0.1")
     try:
         import ray
+
         hostname = ray.util.get_node_ip_address().strip("[]")
     except ImportError:
         pass
@@ -147,9 +151,10 @@ async def wait_for_complete(buf, device):
 
 # ─── Rank 0: send_weights ────────────────────────────────────────────────────
 
+
 async def send_weights(rank, world, mc, msg, tensors, bucket_size, use_fixed):
     """R0: pack tensors into buckets, send to R1, wait for completion."""
-    engine = mc["engine"]
+    mc["engine"]
     bufs = mc["bufs"]
     device = mc["buf"].device
     idx = 0
@@ -184,11 +189,11 @@ async def send_weights(rank, world, mc, msg, tensors, bucket_size, use_fixed):
                 await wait_for_complete(target, device)
             should_wait = True
 
-        assert offset + raw.numel() <= bucket_size, (
-            f"Tensor {name}({weight.shape}) too large for bucket"
-        )
+        assert offset + raw.numel() <= bucket_size, f"Tensor {name}({weight.shape}) too large for bucket"
         bucket_meta[name] = {
-            "shape": weight.shape, "dtype": weight.dtype, "offset": offset,
+            "shape": weight.shape,
+            "dtype": weight.dtype,
+            "offset": offset,
         }
         current[offset : offset + raw.numel()].copy_(raw, non_blocking=True)
         offset += raw.numel()
@@ -212,8 +217,8 @@ async def send_weights(rank, world, mc, msg, tensors, bucket_size, use_fixed):
 
 # ─── Rank 1+: receive_weights (daisy chain) ──────────────────────────────────
 
-async def receive_weights(rank, world, mc, msg, bucket_size, use_fixed,
-                          prev_session, prev_ptr):
+
+async def receive_weights(rank, world, mc, msg, bucket_size, use_fixed, prev_session, prev_ptr):
     """
     Daisy-chain receiver: read from prev rank, forward to next, yield views,
     write completion magic.
@@ -246,7 +251,10 @@ async def receive_weights(rank, world, mc, msg, bucket_size, use_fixed,
 
         # ── RDMA READ: copy from prev rank's buffer ──
         ret = engine.transfer_sync_read(
-            prev_session, current.data_ptr(), remote_ptr, info["len"],
+            prev_session,
+            current.data_ptr(),
+            remote_ptr,
+            info["len"],
         )
         assert ret == 0, f"transfer_sync_read failed ret={ret}"
 
@@ -286,7 +294,10 @@ async def receive_weights(rank, world, mc, msg, bucket_size, use_fixed,
             magic_dest = remote_ptr  # ORIGINAL BUG
 
         ret = engine.transfer_sync_write(
-            prev_session, magic_buf.data_ptr(), magic_dest, 4,
+            prev_session,
+            magic_buf.data_ptr(),
+            magic_dest,
+            4,
         )
         assert ret == 0, f"transfer_sync_write failed ret={ret}"
 
@@ -296,16 +307,16 @@ async def receive_weights(rank, world, mc, msg, bucket_size, use_fixed,
 
         ckpt = {
             "bucket": idx,
-            "A_pre_read":   a.tolist(),
-            "B_post_read":  b.tolist(),
-            "C_pre_yield":  c.tolist(),
+            "A_pre_read": a.tolist(),
+            "B_post_read": b.tolist(),
+            "C_pre_yield": c.tolist(),
             "D_post_yield": d.tolist(),
             "E_post_magic": e.tolist(),
-            "D_eq_E":       d.tolist() == e.tolist(),
-            "E_is_magic":   _is_magic(e),
-            "B_is_magic":   _is_magic(b),
-            "data_ptr":     hex(current.data_ptr()),
-            "remote_ptr":   hex(remote_ptr),
+            "D_eq_E": d.tolist() == e.tolist(),
+            "E_is_magic": _is_magic(e),
+            "B_is_magic": _is_magic(b),
+            "data_ptr": hex(current.data_ptr()),
+            "remote_ptr": hex(remote_ptr),
             "is_intermediate": is_intermediate,
         }
         checkpoints.append(ckpt)
@@ -323,13 +334,12 @@ async def receive_weights(rank, world, mc, msg, bucket_size, use_fixed,
 
 # ─── Main ────────────────────────────────────────────────────────────────────
 
+
 async def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--bucket-size", type=int, default=64 * 1024)
-    parser.add_argument("--fixed", action="store_true",
-                        help="Use magic_ptr (fixed) instead of data ptr (buggy)")
-    parser.add_argument("--tensor-shape", type=str, default="32,32",
-                        help="Comma-separated shape for test tensor")
+    parser.add_argument("--fixed", action="store_true", help="Use magic_ptr (fixed) instead of data ptr (buggy)")
+    parser.add_argument("--tensor-shape", type=str, default="32,32", help="Comma-separated shape for test tensor")
     args = parser.parse_args()
 
     use_fixed = args.fixed
@@ -379,14 +389,26 @@ async def main():
 
     if rank == 0:
         result = await send_weights(
-            rank, world, mc, msg, tensors_to_send, bucket_size, use_fixed,
+            rank,
+            world,
+            mc,
+            msg,
+            tensors_to_send,
+            bucket_size,
+            use_fixed,
         )
     else:
         prev_session = all_info[rank - 1]["session_id"]
         prev_ptr = all_info[rank - 1]["ptr"]
         result = await receive_weights(
-            rank, world, mc, msg, bucket_size, use_fixed,
-            prev_session, prev_ptr,
+            rank,
+            world,
+            mc,
+            msg,
+            bucket_size,
+            use_fixed,
+            prev_session,
+            prev_ptr,
         )
 
     dist.barrier()
@@ -397,20 +419,17 @@ async def main():
     my_result = {
         "rank": rank,
         "data": {
-            k: (v if k != "tensors" else {
-                name: t.cpu().tolist() for name, t in v.items()
-            })
-            for k, v in result.items()
+            k: (v if k != "tensors" else {name: t.cpu().tolist() for name, t in v.items()}) for k, v in result.items()
         },
     }
     dist.all_gather_object(results, my_result)
 
     # ── Print diagnostics ──
     mode = "FIXED (magic_ptr)" if use_fixed else "BUGGY (data ptr)"
-    print(f"\n{'='*70}")
+    print(f"\n{'=' * 70}")
     print(f"  Daisy-Chain Pipeline Test  |  Mode: {mode}")
     print(f"  Ranks: {world}  |  Time: {elapsed:.2f}s")
-    print(f"{'='*70}\n")
+    print(f"{'=' * 70}\n")
 
     for r in range(1, world):
         res = results[r]["data"]
@@ -458,7 +477,7 @@ async def main():
                         print(f"    → Value IS magic bytes as bf16 ({magic_bf16[i].float().item():.6e})")
 
     # ── Side effect check ──
-    print(f"\n── Mooncake Local Side Effect ──")
+    print("\n── Mooncake Local Side Effect ──")
     any_side_effect = False
     for r in range(1, world):
         res = results[r]["data"]
@@ -474,24 +493,24 @@ async def main():
         print("  No local side effect detected.")
 
     # ── Summary ──
-    print(f"\n{'='*70}")
+    print(f"\n{'=' * 70}")
     print("  Summary")
-    print(f"{'='*70}")
+    print(f"{'=' * 70}")
     print(f"  Protocol:             {mode}")
     print(f"  Data corruption:      {'YES' if any_corruption else 'No'}")
     print(f"  Local side effect:    {'YES' if any_side_effect else 'No'}")
 
     if any_corruption and any_side_effect:
-        print(f"\n  Both bugs present: transfer_sync_write local side effect")
-        print(f"  corrupted the buffer, and the next rank read the magic bytes")
-        print(f"  as model weights (embed_tokens).")
+        print("\n  Both bugs present: transfer_sync_write local side effect")
+        print("  corrupted the buffer, and the next rank read the magic bytes")
+        print("  as model weights (embed_tokens).")
     elif any_side_effect:
-        print(f"\n  Local side effect detected but consumer data was OK.")
-        print(f"  In production with more buckets/ranks, this WILL corrupt data.")
+        print("\n  Local side effect detected but consumer data was OK.")
+        print("  In production with more buckets/ranks, this WILL corrupt data.")
     elif any_corruption:
-        print(f"\n  Data corrupted without local side effect — protocol bug.")
+        print("\n  Data corrupted without local side effect — protocol bug.")
     else:
-        print(f"\n  All checks passed.")
+        print("\n  All checks passed.")
 
     print()
     dist.barrier()

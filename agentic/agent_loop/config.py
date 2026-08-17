@@ -70,7 +70,7 @@ class RemoteAgentConfig:
     proxy_server_url: Optional[str] = None
 
     @classmethod
-    def from_env(cls) -> "RemoteAgentConfig":
+    def from_env(cls) -> RemoteAgentConfig:
         """Build config by reading environment variables."""
         kwargs: dict[str, Any] = {}
 

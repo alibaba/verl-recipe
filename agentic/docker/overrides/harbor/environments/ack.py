@@ -13,18 +13,17 @@ import tarfile
 from pathlib import Path
 from typing import Any, Optional
 
+from harbor.environments.base import BaseEnvironment, ExecResult
+from harbor.environments.capabilities import EnvironmentCapabilities
+from harbor.models.environment_type import EnvironmentType
+from harbor.models.task.config import EnvironmentConfig
+from harbor.models.trial.paths import EnvironmentPaths, TrialPaths
 from kubernetes import client as k8s_client
 from kubernetes import config as k8s_config
 from kubernetes.client.rest import ApiException
 from kubernetes.dynamic import DynamicClient
 from kubernetes.stream import stream
 from tenacity import retry, stop_after_attempt, wait_exponential
-
-from harbor.environments.base import BaseEnvironment, ExecResult
-from harbor.environments.capabilities import EnvironmentCapabilities
-from harbor.models.environment_type import EnvironmentType
-from harbor.models.task.config import EnvironmentConfig
-from harbor.models.trial.paths import EnvironmentPaths, TrialPaths
 
 logger = logging.getLogger(__name__)
 
@@ -102,13 +101,10 @@ class KubernetesClientManager:
                 self._kubeconfig = kubeconfig
             except k8s_config.ConfigException as e:
                 raise RuntimeError(
-                    f"Failed to load kubeconfig: {e}\n"
-                    "Ensure kubectl is configured and can access the cluster."
-                )
+                    f"Failed to load kubeconfig: {e}\nEnsure kubectl is configured and can access the cluster."
+                ) from e
 
-    async def get_client(
-        self, context: str | None = None, kubeconfig: str | None = None
-    ):
+    async def get_client(self, context: str | None = None, kubeconfig: str | None = None):
         """
         Get the shared Kubernetes CoreV1Api client, creating it if necessary.
         Also increments the reference count.
@@ -139,14 +135,10 @@ class KubernetesClientManager:
                     )
 
             self._reference_count += 1
-            self._logger.debug(
-                f"Kubernetes client reference count incremented to {self._reference_count}"
-            )
+            self._logger.debug(f"Kubernetes client reference count incremented to {self._reference_count}")
             return self._core_api
 
-    async def get_dynamic_client(
-        self, context: str | None = None, kubeconfig: str | None = None
-    ) -> DynamicClient:
+    async def get_dynamic_client(self, context: str | None = None, kubeconfig: str | None = None) -> DynamicClient:
         """
         Get the shared DynamicClient for CRD operations.
 
@@ -173,9 +165,7 @@ class KubernetesClientManager:
         async with self._client_lock:
             if self._reference_count > 0:
                 self._reference_count -= 1
-                self._logger.debug(
-                    f"Kubernetes client reference count decremented to {self._reference_count}"
-                )
+                self._logger.debug(f"Kubernetes client reference count decremented to {self._reference_count}")
 
     def _cleanup_sync(self):
         """Synchronous cleanup wrapper for atexit."""
@@ -307,9 +297,7 @@ class ACKEnvironment(BaseEnvironment):
         build_timeout_sec = int(build_timeout_sec)
         claim_timeout = int(claim_timeout)
         sandboxset_replicas = int(sandboxset_replicas)
-        memory_limit_multiplier = (
-            None if memory_limit_multiplier is None else float(memory_limit_multiplier)
-        )
+        memory_limit_multiplier = None if memory_limit_multiplier is None else float(memory_limit_multiplier)
         node_selector = _to_dict_or_none(node_selector)
         sandbox_labels = _to_dict_or_none(sandbox_labels)
         sandbox_annotations = _to_dict_or_none(sandbox_annotations)
@@ -339,9 +327,7 @@ class ACKEnvironment(BaseEnvironment):
         # SandboxClaim configuration
         self.use_sandbox_claim = use_sandbox_claim
         # sandboxset_name derived from environment_name (like image name)
-        self.sandboxset_name = self.environment_name.replace("__", "-").replace(
-            "/", "-"
-        )
+        self.sandboxset_name = self.environment_name.replace("__", "-").replace("/", "-")
         self.claim_timeout = claim_timeout
         self.sandbox_image = sandbox_image
         self.sandboxset_replicas = int(sandboxset_replicas)
@@ -407,9 +393,7 @@ class ACKEnvironment(BaseEnvironment):
         if self._client_manager is None:
             self._client_manager = await KubernetesClientManager.get_instance()
         if self._core_api is None:
-            self._core_api = await self._client_manager.get_client(
-                self.context, kubeconfig=self.kubeconfig
-            )
+            self._core_api = await self._client_manager.get_client(self.context, kubeconfig=self.kubeconfig)
             self._batch_api = self._client_manager.get_batch_api()
         # Type narrowing assertions for ty checker
         assert self._core_api is not None, "CoreV1Api should be initialized"
@@ -448,14 +432,11 @@ class ACKEnvironment(BaseEnvironment):
 
     def _validate_definition(self):
         if not self._environment_definition_path.exists():
-            raise FileNotFoundError(
-                f"{self._environment_definition_path} not found. Please ensure the "
-                "file exists."
-            )
+            raise FileNotFoundError(f"{self._environment_definition_path} not found. Please ensure the file exists.")
 
     def _get_image_url(self) -> str:
         """Get the container image URL in the registry.
-        
+
         If registry is not set, returns just the image name (e.g. "my-task:latest").
                 Resolution order:
         1. If ``task.toml [environment] docker_image`` is set, use it as-is
@@ -478,7 +459,6 @@ class ACKEnvironment(BaseEnvironment):
                 return f"{configured_image}:latest"
             return configured_image
 
-        
         safe_name = self.environment_name.replace("__", "-")
         # Strip environment name prefix (e.g., "org/task" -> "task") when
         # registry is configured, since the namespace is handled by the registry.
@@ -531,18 +511,13 @@ class ACKEnvironment(BaseEnvironment):
                 await result.wait()
                 return result.returncode == 0
             except Exception as e:
-                logger.warning(
-                    f"docker manifest inspect failed, falling back to crane. Error: {e}"
-                )
+                logger.warning(f"docker manifest inspect failed, falling back to crane. Error: {e}")
 
         # Fallback: use crane manifest
         import shutil
 
         if shutil.which("crane") is None:
-            logger.warning(
-                "Neither docker nor crane is available to check image existence. "
-                "Will attempt to build."
-            )
+            logger.warning("Neither docker nor crane is available to check image existence. Will attempt to build.")
             return False
 
         try:
@@ -556,9 +531,7 @@ class ACKEnvironment(BaseEnvironment):
                 docker_config = {
                     "auths": {
                         registry_key: {
-                            "auth": base64.b64encode(
-                                f"{registry_auth[0]}:{registry_auth[1]}".encode()
-                            ).decode()
+                            "auth": base64.b64encode(f"{registry_auth[0]}:{registry_auth[1]}".encode()).decode()
                         }
                     }
                 }
@@ -578,9 +551,7 @@ class ACKEnvironment(BaseEnvironment):
             await result.wait()
             return result.returncode == 0
         except Exception as e:
-            logger.warning(
-                f"crane manifest check failed, will attempt to build. Error: {e}"
-            )
+            logger.warning(f"crane manifest check failed, will attempt to build. Error: {e}")
             return False
 
     async def _get_registry_auth(self) -> tuple[str, str] | None:
@@ -738,9 +709,7 @@ class ACKEnvironment(BaseEnvironment):
                 docker_config = {
                     "auths": {
                         registry_key: {
-                            "auth": base64.b64encode(
-                                f"{registry_auth[0]}:{registry_auth[1]}".encode()
-                            ).decode()
+                            "auth": base64.b64encode(f"{registry_auth[0]}:{registry_auth[1]}".encode()).decode()
                         }
                     }
                 }
@@ -768,13 +737,9 @@ class ACKEnvironment(BaseEnvironment):
 
             if proc.returncode != 0:
                 error_msg = stderr.decode() if stderr else "Unknown error"
-                raise RuntimeError(
-                    f"buildctl failed with code {proc.returncode}: {error_msg}"
-                )
+                raise RuntimeError(f"buildctl failed with code {proc.returncode}: {error_msg}")
 
-            logger.debug(
-                "Image %s built and pushed successfully via BuildKit", image_url
-            )
+            logger.debug("Image %s built and pushed successfully via BuildKit", image_url)
 
         finally:
             # Cleanup temp directory
@@ -797,18 +762,14 @@ class ACKEnvironment(BaseEnvironment):
         dockerfile_path = self._environment_definition_path
         if not dockerfile_path.exists():
             raise FileNotFoundError(
-                f"Dockerfile not found at {dockerfile_path}. "
-                "Cannot build image without a Dockerfile."
+                f"Dockerfile not found at {dockerfile_path}. Cannot build image without a Dockerfile."
             )
 
         # Use BuildKit if configured
         if self.use_buildkit:
             logger.debug(f"Building and pushing image via BuildKit: {image_url}")
             context_tar = self._create_context_archive(self.environment_dir)
-            logger.debug(
-                f"Created build context archive ({len(context_tar)} bytes) "
-                f"from {self.environment_dir}"
-            )
+            logger.debug(f"Created build context archive ({len(context_tar)} bytes) from {self.environment_dir}")
             await self._build_via_buildkit(image_url, context_tar)
             logger.debug(f"Successfully built and pushed image: {image_url}")
             return
@@ -819,9 +780,7 @@ class ACKEnvironment(BaseEnvironment):
 
         namespace = self.build_job_namespace
         # Sanitize for K8s naming: lowercase, alphanumeric + hyphens, max 63
-        safe_suffix = re.sub(
-            r"[^a-z0-9-]", "-", image_url.split("/")[-1].split(":")[0].lower()
-        )[:40]
+        safe_suffix = re.sub(r"[^a-z0-9-]", "-", image_url.split("/")[-1].split(":")[0].lower())[:40]
         job_name = f"img-build-{safe_suffix}"[:63].rstrip("-")
         cm_name = f"build-ctx-{safe_suffix}"[:63].rstrip("-")
 
@@ -841,13 +800,9 @@ class ACKEnvironment(BaseEnvironment):
 
         logger.debug(f"Successfully built and pushed image: {image_url}")
 
-    async def _create_build_configmap(
-        self, name: str, namespace: str, dockerfile_content: str
-    ) -> None:
+    async def _create_build_configmap(self, name: str, namespace: str, dockerfile_content: str) -> None:
         """Create a ConfigMap containing the Dockerfile."""
-        assert self._core_api is not None, (
-            "_core_api should be initialized before calling this method"
-        )
+        assert self._core_api is not None, "_core_api should be initialized before calling this method"
         cm = k8s_client.V1ConfigMap(
             metadata=k8s_client.V1ObjectMeta(name=name, namespace=namespace),
             data={"Dockerfile": dockerfile_content},
@@ -881,9 +836,7 @@ class ACKEnvironment(BaseEnvironment):
         Uses Docker-in-Docker (DinD) with a privileged container that runs its
         own dockerd process internally.  No host Docker socket is mounted.
         """
-        assert self._batch_api is not None, (
-            "_batch_api should be initialized before calling this method"
-        )
+        assert self._batch_api is not None, "_batch_api should be initialized before calling this method"
         build_script = (
             "set -e\n"
             # Start dockerd inside the privileged container (pure DinD)
@@ -940,9 +893,7 @@ class ACKEnvironment(BaseEnvironment):
         # Image pull secrets for pulling the DinD image itself
         image_pull_secrets = None
         if self.image_pull_secret:
-            image_pull_secrets = [
-                k8s_client.V1LocalObjectReference(name=self.image_pull_secret)
-            ]
+            image_pull_secrets = [k8s_client.V1LocalObjectReference(name=self.image_pull_secret)]
 
         container = k8s_client.V1Container(
             name="builder",
@@ -968,9 +919,7 @@ class ACKEnvironment(BaseEnvironment):
         )
 
         if self.tolerations:
-            pod_spec.tolerations = [
-                k8s_client.V1Toleration(**t) for t in self.tolerations
-            ]
+            pod_spec.tolerations = [k8s_client.V1Toleration(**t) for t in self.tolerations]
 
         job = k8s_client.V1Job(
             api_version="batch/v1",
@@ -1007,9 +956,7 @@ class ACKEnvironment(BaseEnvironment):
 
     async def _wait_for_job(self, job_name: str, namespace: str) -> None:
         """Poll until the Job completes or times out."""
-        assert self._batch_api is not None, (
-            "_batch_api should be initialized before calling this method"
-        )
+        assert self._batch_api is not None, "_batch_api should be initialized before calling this method"
         timeout = self.build_timeout_sec
         poll_interval = 5
 
@@ -1038,9 +985,7 @@ class ACKEnvironment(BaseEnvironment):
                 raise RuntimeError(f"Build job {job_name} failed. Logs:\n{log_msg}")
 
             if elapsed % 30 == 0:
-                logger.debug(
-                    f"Waiting for build job {job_name} ({elapsed}s/{timeout}s)..."
-                )
+                logger.debug(f"Waiting for build job {job_name} ({elapsed}s/{timeout}s)...")
 
             await asyncio.sleep(poll_interval)
 
@@ -1048,9 +993,7 @@ class ACKEnvironment(BaseEnvironment):
 
     async def _get_job_pod_logs(self, job_name: str, namespace: str) -> str:
         """Get logs from the Job's pod for debugging."""
-        assert self._core_api is not None, (
-            "_core_api should be initialized before calling this method"
-        )
+        assert self._core_api is not None, "_core_api should be initialized before calling this method"
         try:
             pods = self._core_api.list_namespaced_pod(
                 namespace=namespace,
@@ -1070,9 +1013,7 @@ class ACKEnvironment(BaseEnvironment):
 
     async def _delete_job(self, job_name: str, namespace: str) -> None:
         """Delete a Job and wait for it to be removed."""
-        assert self._batch_api is not None, (
-            "_batch_api should be initialized before calling this method"
-        )
+        assert self._batch_api is not None, "_batch_api should be initialized before calling this method"
         try:
             self._batch_api.delete_namespaced_job(
                 name=job_name,
@@ -1095,16 +1036,10 @@ class ACKEnvironment(BaseEnvironment):
             if e.status != 404:
                 logger.warning(f"Failed to delete job {job_name}: {e}")
 
-    async def _cleanup_build_resources(
-        self, job_name: str, cm_name: str, namespace: str
-    ) -> None:
+    async def _cleanup_build_resources(self, job_name: str, cm_name: str, namespace: str) -> None:
         """Best-effort cleanup of build Job and ConfigMap."""
-        assert self._core_api is not None, (
-            "_core_api should be initialized before calling this method"
-        )
-        assert self._batch_api is not None, (
-            "_batch_api should be initialized before calling this method"
-        )
+        assert self._core_api is not None, "_core_api should be initialized before calling this method"
+        assert self._batch_api is not None, "_batch_api should be initialized before calling this method"
         # Delete ConfigMap
         try:
             self._core_api.delete_namespaced_config_map(
@@ -1213,9 +1148,7 @@ class ACKEnvironment(BaseEnvironment):
         # Build image pull secrets if specified
         image_pull_secrets = None
         if self.image_pull_secret:
-            image_pull_secrets = [
-                k8s_client.V1LocalObjectReference(name=self.image_pull_secret)
-            ]
+            image_pull_secrets = [k8s_client.V1LocalObjectReference(name=self.image_pull_secret)]
 
         # Build tolerations if specified
         tolerations = None
@@ -1232,9 +1165,7 @@ class ACKEnvironment(BaseEnvironment):
                 labels={
                     "app": "sandbox",
                     "session": self.session_id,
-                    "environment": self.environment_name.replace("__", "-").replace(
-                        "/", "-"
-                    ),
+                    "environment": self.environment_name.replace("__", "-").replace("/", "-"),
                 },
             ),
             spec=k8s_client.V1PodSpec(
@@ -1297,9 +1228,7 @@ class ACKEnvironment(BaseEnvironment):
                     self._core_api.delete_namespaced_pod(
                         name=self.pod_name,
                         namespace=self.namespace,
-                        body=k8s_client.V1DeleteOptions(
-                            grace_period_seconds=0, propagation_policy="Foreground"
-                        ),
+                        body=k8s_client.V1DeleteOptions(grace_period_seconds=0, propagation_policy="Foreground"),
                     )
                     # Wait for deletion
                     for _ in range(60):
@@ -1313,27 +1242,23 @@ class ACKEnvironment(BaseEnvironment):
                             if del_e.status == 404:
                                 break
                     else:
-                        raise RuntimeError(
-                            f"Pod {self.pod_name} was not deleted in time."
-                        )
+                        raise RuntimeError(f"Pod {self.pod_name} was not deleted in time.")
                 except ApiException as del_e:
                     if del_e.status != 404:
-                        raise RuntimeError(f"Failed to delete existing pod: {del_e}")
+                        raise RuntimeError(f"Failed to delete existing pod: {del_e}") from del_e
 
                 self._core_api.create_namespaced_pod(
                     namespace=self.namespace,
                     body=pod,
                 )
             else:
-                raise RuntimeError(f"Failed to create pod: {e}")
+                raise RuntimeError(f"Failed to create pod: {e}") from e
 
         # Wait for pod to be ready
         await self._wait_for_pod_ready()
 
         # Create required directories
-        mkdir_result = await self.exec(
-            f"mkdir -p {EnvironmentPaths.agent_dir} {EnvironmentPaths.verifier_dir}"
-        )
+        mkdir_result = await self.exec(f"mkdir -p {EnvironmentPaths.agent_dir} {EnvironmentPaths.verifier_dir}")
         if mkdir_result.return_code != 0:
             raise RuntimeError(
                 f"Failed to create log directories in pod {self.pod_name}: "
@@ -1341,9 +1266,7 @@ class ACKEnvironment(BaseEnvironment):
             )
 
         # Ensure directories are writable by non-root users
-        chmod_result = await self.exec(
-            f"chmod 777 {EnvironmentPaths.agent_dir} {EnvironmentPaths.verifier_dir}"
-        )
+        chmod_result = await self.exec(f"chmod 777 {EnvironmentPaths.agent_dir} {EnvironmentPaths.verifier_dir}")
         if chmod_result.return_code != 0:
             raise RuntimeError(
                 f"Failed to chmod log directories in pod {self.pod_name}: "
@@ -1389,9 +1312,7 @@ class ACKEnvironment(BaseEnvironment):
                                 if e.status == 404:
                                     break
                         else:
-                            logger.warning(
-                                f"Pod {self.pod_name} did not terminate within 60 seconds."
-                            )
+                            logger.warning(f"Pod {self.pod_name} did not terminate within 60 seconds.")
                     except ApiException as e:
                         if e.status != 404:
                             raise
@@ -1539,9 +1460,7 @@ class ACKEnvironment(BaseEnvironment):
 
     async def _wait_for_container_exec_ready(self, max_attempts: int = 60):
         """Wait for container to be ready for exec operations."""
-        assert self._core_api is not None, (
-            "_core_api should be initialized before calling this method"
-        )
+        assert self._core_api is not None, "_core_api should be initialized before calling this method"
         for attempt in range(max_attempts):
             try:
                 test_command = ["true"]
@@ -1561,9 +1480,7 @@ class ACKEnvironment(BaseEnvironment):
             except ApiException as e:
                 if "container not found" in str(e) or e.status == 500:
                     if attempt % 10 == 0:
-                        logger.debug(
-                            f"Container not ready, attempt {attempt + 1}/{max_attempts}"
-                        )
+                        logger.debug(f"Container not ready, attempt {attempt + 1}/{max_attempts}")
                     await asyncio.sleep(3)
                     continue
                 else:
@@ -1577,9 +1494,7 @@ class ACKEnvironment(BaseEnvironment):
                 else:
                     raise
 
-        raise RuntimeError(
-            f"Container not ready for exec after {max_attempts} attempts"
-        )
+        raise RuntimeError(f"Container not ready for exec after {max_attempts} attempts")
 
     @retry(
         stop=stop_after_attempt(3),
@@ -1657,9 +1572,7 @@ class ACKEnvironment(BaseEnvironment):
 
         mkdir_result = await self.exec(f"mkdir -p {target_dir}")
         if mkdir_result.return_code != 0:
-            raise RuntimeError(
-                f"Failed to create target directory {target_dir}: {mkdir_result.stderr}"
-            )
+            raise RuntimeError(f"Failed to create target directory {target_dir}: {mkdir_result.stderr}")
 
         exec_command = ["tar", "xf", "-", "-C", target_dir]
 
@@ -1677,21 +1590,17 @@ class ACKEnvironment(BaseEnvironment):
             )
         except ApiException as e:
             if e.status == 500:
-                raise RuntimeError(
-                    f"Pod {self.pod_name} returned 500 error during upload."
-                )
+                raise RuntimeError(f"Pod {self.pod_name} returned 500 error during upload.") from e
             raise
 
         try:
             resp.write_stdin(tar_buffer.read())
         except Exception as e:
-            raise RuntimeError(f"Failed to write tar data to pod {self.pod_name}: {e}")
+            raise RuntimeError(f"Failed to write tar data to pod {self.pod_name}: {e}") from e
 
         resp.run_forever(timeout=1)
         resp.close()
-        logger.debug(
-            f"Successfully uploaded {len(files_to_upload)} files ({tar_size} bytes) to {target_dir}"
-        )
+        logger.debug(f"Successfully uploaded {len(files_to_upload)} files ({tar_size} bytes) to {target_dir}")
 
     @retry(
         stop=stop_after_attempt(3),
@@ -1732,9 +1641,7 @@ class ACKEnvironment(BaseEnvironment):
         tar_buffer = io.BytesIO(tar_data)
         with tarfile.open(fileobj=tar_buffer, mode="r") as tar:
             for member in tar.getmembers():
-                if member.name == source_path or member.name.startswith(
-                    source_path.lstrip("/")
-                ):
+                if member.name == source_path or member.name.startswith(source_path.lstrip("/")):
                     member.name = target_path.name
                     tar.extract(member, path=str(target_path.parent))
                     break
@@ -1769,9 +1676,9 @@ class ACKEnvironment(BaseEnvironment):
             )
         except ApiException as e:
             if e.status == 404:
-                raise RuntimeError(f"Pod {self.pod_name} not found (404).")
+                raise RuntimeError(f"Pod {self.pod_name} not found (404).") from e
             elif e.status == 500:
-                raise RuntimeError(f"Pod {self.pod_name} is in an error state (500).")
+                raise RuntimeError(f"Pod {self.pod_name} is in an error state (500).") from e
             raise
 
         tar_data = b""
@@ -1786,32 +1693,22 @@ class ACKEnvironment(BaseEnvironment):
             if resp.peek_stderr():
                 stderr_data += resp.read_stderr()
 
-        if stderr_data and (
-            "No such file or directory" in stderr_data or "cannot cd" in stderr_data
-        ):
-            raise RuntimeError(
-                f"Failed to access directory {source_dir} in pod {self.pod_name}: {stderr_data.strip()}"
-            )
+        if stderr_data and ("No such file or directory" in stderr_data or "cannot cd" in stderr_data):
+            raise RuntimeError(f"Failed to access directory {source_dir} in pod {self.pod_name}: {stderr_data.strip()}")
 
         if not tar_data:
-            raise RuntimeError(
-                f"No data received when downloading {source_dir} from pod {self.pod_name}."
-            )
+            raise RuntimeError(f"No data received when downloading {source_dir} from pod {self.pod_name}.")
 
         tar_buffer = io.BytesIO(tar_data)
         try:
             with tarfile.open(fileobj=tar_buffer, mode="r") as tar:
                 tar.extractall(path=str(target_dir))
         except tarfile.TarError as e:
-            raise RuntimeError(
-                f"Failed to extract directory {source_dir} from pod {self.pod_name}: {e}"
-            )
+            raise RuntimeError(f"Failed to extract directory {source_dir} from pod {self.pod_name}: {e}") from e
 
     async def _wait_for_pod_ready(self, timeout_sec: int = 300):
         """Wait for pod to be ready."""
-        assert self._core_api is not None, (
-            "_core_api should be initialized before calling this method"
-        )
+        assert self._core_api is not None, "_core_api should be initialized before calling this method"
         logger.debug(f"Waiting for pod {self.pod_name} to be ready...")
 
         for attempt in range(timeout_sec):
@@ -1850,7 +1747,7 @@ class ACKEnvironment(BaseEnvironment):
 
             except ApiException as e:
                 if e.status != 404:
-                    raise RuntimeError(f"Kubernetes API error: {e.status} - {e.reason}")
+                    raise RuntimeError(f"Kubernetes API error: {e.status} - {e.reason}") from e
 
             await asyncio.sleep(1)
 
@@ -1868,9 +1765,7 @@ class ACKEnvironment(BaseEnvironment):
         if pod.status.container_statuses:
             for c in pod.status.container_statuses:
                 if c.state.waiting:
-                    reasons.append(
-                        f"Container {c.name} waiting: {c.state.waiting.reason}"
-                    )
+                    reasons.append(f"Container {c.name} waiting: {c.state.waiting.reason}")
                 elif c.state.terminated:
                     reasons.append(
                         f"Container {c.name} terminated: {c.state.terminated.reason} "
@@ -1895,9 +1790,7 @@ class ACKEnvironment(BaseEnvironment):
         The SandboxSet template mirrors the Pod spec used in standard mode,
         providing pre-warmed sandbox instances that can be claimed via SandboxClaim.
         """
-        assert self._sandboxset_api is not None, (
-            "_sandboxset_api should be initialized before calling this method"
-        )
+        assert self._sandboxset_api is not None, "_sandboxset_api should be initialized before calling this method"
         sandboxset_name = self.sandboxset_name
         image = self._get_sandbox_image()
 
@@ -1908,13 +1801,12 @@ class ACKEnvironment(BaseEnvironment):
                 namespace=self.namespace,
             )
             logger.debug(
-                f"SandboxSet {sandboxset_name} already exists "
-                f"(replicas={getattr(existing.spec, 'replicas', '?')})"
+                f"SandboxSet {sandboxset_name} already exists (replicas={getattr(existing.spec, 'replicas', '?')})"
             )
             return
         except ApiException as e:
             if e.status != 404:
-                raise RuntimeError(f"Failed to check SandboxSet {sandboxset_name}: {e}")
+                raise RuntimeError(f"Failed to check SandboxSet {sandboxset_name}: {e}") from e
 
         # Build container spec (similar to Pod spec in standard mode)
         container = {
@@ -1935,9 +1827,7 @@ class ACKEnvironment(BaseEnvironment):
 
         # Add ephemeral storage request
         if self.ephemeral_storage_request:
-            container["resources"]["requests"]["ephemeral-storage"] = (
-                self.ephemeral_storage_request
-            )
+            container["resources"]["requests"]["ephemeral-storage"] = self.ephemeral_storage_request
 
         # Add memory limit
         if self.memory_limit:
@@ -1973,9 +1863,7 @@ class ACKEnvironment(BaseEnvironment):
                 "namespace": self.namespace,
                 "labels": {
                     "app": "kube-rl",
-                    "environment": self.environment_name.replace("__", "-").replace(
-                        "/", "-"
-                    ),
+                    "environment": self.environment_name.replace("__", "-").replace("/", "-"),
                     **(self.sandbox_labels or {}),
                 },
             },
@@ -1985,9 +1873,7 @@ class ACKEnvironment(BaseEnvironment):
                     "metadata": {
                         "labels": {
                             "app": "sandbox",
-                            "environment": self.environment_name.replace(
-                                "__", "-"
-                            ).replace("/", "-"),
+                            "environment": self.environment_name.replace("__", "-").replace("/", "-"),
                             **(self.sandbox_labels or {}),
                         },
                         "annotations": {
@@ -2009,23 +1895,18 @@ class ACKEnvironment(BaseEnvironment):
                 namespace=self.namespace,
             )
             logger.debug(
-                f"Created SandboxSet {sandboxset_name} with {self.sandboxset_replicas} "
-                f"replicas using image {image}"
+                f"Created SandboxSet {sandboxset_name} with {self.sandboxset_replicas} replicas using image {image}"
             )
         except ApiException as e:
             if e.status == 409:
                 # Race condition: another process created it between our check and create
                 logger.debug(f"SandboxSet {sandboxset_name} was created concurrently")
             else:
-                raise RuntimeError(
-                    f"Failed to create SandboxSet {sandboxset_name}: {e}"
-                )
+                raise RuntimeError(f"Failed to create SandboxSet {sandboxset_name}: {e}") from e
 
     async def _start_with_sandboxclaim(self):
         """Start by creating a SandboxClaim and waiting for sandbox to be ready."""
-        assert self._sandboxclaim_api is not None, (
-            "_sandboxclaim_api should be initialized before calling this method"
-        )
+        assert self._sandboxclaim_api is not None, "_sandboxclaim_api should be initialized before calling this method"
         # Ensure SandboxSet exists before creating claim
         await self._ensure_sandboxset()
 
@@ -2037,9 +1918,7 @@ class ACKEnvironment(BaseEnvironment):
         claim_name = f"{base[:58]}-{random_suffix}".rstrip("-")
         self._claim_name = claim_name
 
-        logger.debug(
-            f"Creating SandboxClaim {claim_name} from SandboxSet {self.sandboxset_name}"
-        )
+        logger.debug(f"Creating SandboxClaim {claim_name} from SandboxSet {self.sandboxset_name}")
 
         # Build SandboxClaim body
         sandboxclaim_body = {
@@ -2090,9 +1969,9 @@ class ACKEnvironment(BaseEnvironment):
                 raise RuntimeError(
                     "Permission denied. Ensure ServiceAccount has RBAC for "
                     "agents.kruise.io API group (sandboxclaims, sandboxes)."
-                )
+                ) from e
             else:
-                raise RuntimeError(f"Failed to create SandboxClaim: {e}")
+                raise RuntimeError(f"Failed to create SandboxClaim: {e}") from e
 
         # Wait for SandboxClaim to complete
         await self._wait_for_claim_completed()
@@ -2104,9 +1983,7 @@ class ACKEnvironment(BaseEnvironment):
         await self._wait_for_pod_ready()
 
         # Create required directories
-        mkdir_result = await self.exec(
-            f"mkdir -p {EnvironmentPaths.agent_dir} {EnvironmentPaths.verifier_dir}"
-        )
+        mkdir_result = await self.exec(f"mkdir -p {EnvironmentPaths.agent_dir} {EnvironmentPaths.verifier_dir}")
         if mkdir_result.return_code != 0:
             raise RuntimeError(
                 f"Failed to create directories in pod {self.pod_name}: "
@@ -2114,9 +1991,7 @@ class ACKEnvironment(BaseEnvironment):
             )
 
         # Ensure directories are writable by non-root users
-        chmod_result = await self.exec(
-            f"chmod 777 {EnvironmentPaths.agent_dir} {EnvironmentPaths.verifier_dir}"
-        )
+        chmod_result = await self.exec(f"chmod 777 {EnvironmentPaths.agent_dir} {EnvironmentPaths.verifier_dir}")
         if chmod_result.return_code != 0:
             raise RuntimeError(
                 f"Failed to chmod directories in pod {self.pod_name}: "
@@ -2125,9 +2000,7 @@ class ACKEnvironment(BaseEnvironment):
 
     async def _wait_for_claim_completed(self, timeout_sec: int | None = None):
         """Wait for SandboxClaim to reach Completed phase."""
-        assert self._sandboxclaim_api is not None, (
-            "_sandboxclaim_api should be initialized before calling this method"
-        )
+        assert self._sandboxclaim_api is not None, "_sandboxclaim_api should be initialized before calling this method"
         if timeout_sec is None:
             timeout_sec = self.claim_timeout + 60  # Extra buffer
 
@@ -2154,10 +2027,7 @@ class ACKEnvironment(BaseEnvironment):
                         )
 
                 elif phase == "Failed":
-                    raise RuntimeError(
-                        f"SandboxClaim failed: "
-                        f"{getattr(claim.status, 'message', 'Unknown error')}"
-                    )
+                    raise RuntimeError(f"SandboxClaim failed: {getattr(claim.status, 'message', 'Unknown error')}")
 
                 elif phase == "Claiming":
                     if elapsed % 30 == 0:
@@ -2165,7 +2035,7 @@ class ACKEnvironment(BaseEnvironment):
 
             except ApiException as e:
                 if e.status != 404:
-                    raise RuntimeError(f"API error ({e.status}): {e.reason}")
+                    raise RuntimeError(f"API error ({e.status}): {e.reason}") from e
 
             await asyncio.sleep(2)
 
@@ -2173,9 +2043,7 @@ class ACKEnvironment(BaseEnvironment):
 
     async def _get_claimed_sandbox(self):
         """Get the Sandbox claimed by this SandboxClaim."""
-        assert self._sandbox_api is not None, (
-            "_sandbox_api should be initialized before calling this method"
-        )
+        assert self._sandbox_api is not None, "_sandbox_api should be initialized before calling this method"
         try:
             # Try label selector first
             sandboxes = self._sandbox_api.get(
@@ -2197,10 +2065,7 @@ class ACKEnvironment(BaseEnvironment):
                 )
                 for sb in sandboxes.items:
                     annotations = getattr(sb.metadata, "annotations", {}) or {}
-                    if (
-                        annotations.get("agents.kruise.io/claim-name")
-                        == self._claim_name
-                    ):
+                    if annotations.get("agents.kruise.io/claim-name") == self._claim_name:
                         sandboxes.items = [sb]
                         break
 
@@ -2214,16 +2079,14 @@ class ACKEnvironment(BaseEnvironment):
             raise RuntimeError(f"No Sandbox found for claim {self._claim_name}")
 
         except ApiException as e:
-            raise RuntimeError(f"Failed to get Sandbox: {e}")
+            raise RuntimeError(f"Failed to get Sandbox: {e}") from e
 
     async def _delete_sandboxclaim(self):
         """Delete the SandboxClaim and the associated Sandbox."""
         if not self._claim_name:
             return
 
-        assert self._sandboxclaim_api is not None, (
-            "_sandboxclaim_api should be initialized before calling this method"
-        )
+        assert self._sandboxclaim_api is not None, "_sandboxclaim_api should be initialized before calling this method"
 
         # Delete the Sandbox first (so it doesn't return to pool)
         if self._sandbox_name:
@@ -2248,9 +2111,7 @@ class ACKEnvironment(BaseEnvironment):
                 except ApiException as e:
                     if e.status == 404:
                         return
-            logger.warning(
-                f"SandboxClaim {self._claim_name} not deleted within timeout"
-            )
+            logger.warning(f"SandboxClaim {self._claim_name} not deleted within timeout")
         except ApiException as e:
             if e.status != 404:
                 logger.warning(f"Failed to delete SandboxClaim {self._claim_name}: {e}")
@@ -2260,9 +2121,7 @@ class ACKEnvironment(BaseEnvironment):
         if not self._sandbox_name:
             return
 
-        assert self._sandbox_api is not None, (
-            "_sandbox_api should be initialized before calling this method"
-        )
+        assert self._sandbox_api is not None, "_sandbox_api should be initialized before calling this method"
 
         try:
             self._sandbox_api.delete(

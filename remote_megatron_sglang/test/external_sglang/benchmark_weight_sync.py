@@ -26,6 +26,7 @@ Metrics per round:
 
 Run from the Ray head pod:  python3 benchmark_weight_sync.py
 """
+
 import asyncio
 import glob
 import os
@@ -54,14 +55,16 @@ _RT = {"env_vars": {"PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True"}}
 # auto-selects the correct GID PER NODE from NCCL_IB_ADDR_RANGE — do NOT force
 # NCCL_IB_GID_INDEX (the trainer uses GID 7 but the sglang pod uses GID 11, so a
 # forced index breaks one side and the rendezvous hangs).
-_NCCL_RT = {"env_vars": {
-    "NCCL_IB_ADDR_FAMILY": "AF_INET6",
-    "NCCL_IB_ADDR_RANGE": os.environ.get("NCCL_IB_ADDR_RANGE", "2001:db8:80f:e000::/60"),
-    "NCCL_NET_PLUGIN": "none",
-    "NCCL_SOCKET_IFNAME": "eth0",
-    "GLOO_SOCKET_IFNAME": "eth0",
-    "NCCL_DEBUG": os.environ.get("NCCL_DEBUG", "WARN"),
-}}
+_NCCL_RT = {
+    "env_vars": {
+        "NCCL_IB_ADDR_FAMILY": "AF_INET6",
+        "NCCL_IB_ADDR_RANGE": os.environ.get("NCCL_IB_ADDR_RANGE", "2001:db8:80f:e000::/60"),
+        "NCCL_NET_PLUGIN": "none",
+        "NCCL_SOCKET_IFNAME": "eth0",
+        "GLOO_SOCKET_IFNAME": "eth0",
+        "NCCL_DEBUG": os.environ.get("NCCL_DEBUG", "WARN"),
+    }
+}
 
 
 # ---------------------------------------------------------------------------
@@ -84,8 +87,7 @@ class _SenderBase:
         return {"n_tensors": len(self._weights), "total_bytes": total}
 
     def _gen(self):
-        for name, t in self._weights:
-            yield name, t
+        yield from self._weights
 
 
 @ray.remote(num_gpus=1, num_cpus=4)
@@ -167,8 +169,11 @@ class NcclReceiverCE:
         self._device_mesh = None
         host, _, port_s = sglang_url.replace("http://", "").rstrip("/").partition(":")
         self._server = AsyncHttpServerAdapter(
-            model_path=model_path, host=host, port=int(port_s or 30000),
-            launch_server=False, trust_remote_code=True,
+            model_path=model_path,
+            host=host,
+            port=int(port_s or 30000),
+            launch_server=False,
+            trust_remote_code=True,
         )
 
     def get_rendezvous(self):
@@ -188,8 +193,10 @@ class NcclReceiverCE:
 
         if not torch.distributed.is_initialized():
             torch.distributed.init_process_group(
-                backend="gloo", init_method=f"tcp://{master_addr}:{master_port}",
-                world_size=self._tp_size, rank=self._tp_rank,
+                backend="gloo",
+                init_method=f"tcp://{master_addr}:{master_port}",
+                world_size=self._tp_size,
+                rank=self._tp_rank,
             )
         self._device_mesh = init_device_mesh("cpu", (self._tp_size,), mesh_dim_names=("infer_tp",))
 
@@ -213,8 +220,10 @@ class NcclReceiverCE:
                     return
                 get_torch_device().synchronize()
                 await sgl_update_weights(
-                    engine=self._server, params_batch=batch,
-                    device_mesh_key="infer_tp", device_mesh=self._device_mesh,
+                    engine=self._server,
+                    params_batch=batch,
+                    device_mesh_key="infer_tp",
+                    device_mesh=self._device_mesh,
                 )
                 total += len(batch)
                 batch = []
@@ -252,8 +261,13 @@ def _build_mooncake_receivers(recv_device):
         opts["runtime_env"] = _RT
     recv = [
         ReceiverCE.options(**opts).remote(
-            sglang_url=f"http://127.0.0.1:{PORT}", model_path=MODEL, bucket_size=BUCKET,
-            tp_rank=r, tp_size=TP, recv_device=recv_device, gpu_offset=0,
+            sglang_url=f"http://127.0.0.1:{PORT}",
+            model_path=MODEL,
+            bucket_size=BUCKET,
+            tp_rank=r,
+            tp_size=TP,
+            recv_device=recv_device,
+            gpu_offset=0,
         )
         for r in range(TP)
     ]
@@ -268,8 +282,13 @@ def _build_nccl_receivers():
     # not work on cuMemMap/expandable memory).
     recv = [
         NcclReceiverCE.options(resources={RESOURCE: 1}, runtime_env=_NCCL_RT).remote(
-            sglang_url=f"http://127.0.0.1:{PORT}", model_path=MODEL, bucket_size=BUCKET,
-            tp_rank=r, tp_size=TP, gpu_offset=0, group_name=NCCL_GROUP,
+            sglang_url=f"http://127.0.0.1:{PORT}",
+            model_path=MODEL,
+            bucket_size=BUCKET,
+            tp_rank=r,
+            tp_size=TP,
+            gpu_offset=0,
+            group_name=NCCL_GROUP,
         )
         for r in range(TP)
     ]
@@ -306,8 +325,11 @@ def _sync_round(sender, receivers, backend):
     finalize_s = time.time() - t
 
     return {
-        "setup_s": setup_s, "sync_s": sync_s, "finalize_s": finalize_s,
-        "transport_s": send_info["transport_s"], "total_bytes": send_info["total_bytes"],
+        "setup_s": setup_s,
+        "sync_s": sync_s,
+        "finalize_s": finalize_s,
+        "transport_s": send_info["transport_s"],
+        "total_bytes": send_info["total_bytes"],
     }
 
 
@@ -317,9 +339,12 @@ def _run_variant(name, sender, receivers, backend):
     for i in range(ROUNDS):
         r = _sync_round(sender, receivers, backend)
         tag = "warmup" if i == 0 else "measure"
-        gbps = r["total_bytes"] / r["transport_s"] / (1024 ** 3)
-        print(f"  round {i} [{tag}]: transport={r['transport_s']:.2f}s ({gbps:.2f} GB/s)  "
-              f"sync={r['sync_s']:.2f}s  setup={r['setup_s']:.2f}s  finalize={r['finalize_s']:.2f}s", flush=True)
+        gbps = r["total_bytes"] / r["transport_s"] / (1024**3)
+        print(
+            f"  round {i} [{tag}]: transport={r['transport_s']:.2f}s ({gbps:.2f} GB/s)  "
+            f"sync={r['sync_s']:.2f}s  setup={r['setup_s']:.2f}s  finalize={r['finalize_s']:.2f}s",
+            flush=True,
+        )
         rows.append(r)
     return name, rows[1:]  # drop warmup
 
@@ -328,22 +353,30 @@ def _summ(name, rows):
     def stat(k):
         vals = [r[k] for r in rows]
         return statistics.mean(vals), (min(vals), max(vals))
+
     tb = rows[0]["total_bytes"]
     tr_mean, tr_rng = stat("transport_s")
     sy_mean, sy_rng = stat("sync_s")
-    gbps = tb / tr_mean / (1024 ** 3)
+    gbps = tb / tr_mean / (1024**3)
     return {
-        "variant": name, "n": len(rows), "model_GB": tb / (1024 ** 3),
-        "transport_s_mean": tr_mean, "transport_s_range": tr_rng, "GB_s": gbps,
-        "sync_s_mean": sy_mean, "sync_s_range": sy_rng,
-        "setup_s_mean": stat("setup_s")[0], "finalize_s_mean": stat("finalize_s")[0],
+        "variant": name,
+        "n": len(rows),
+        "model_GB": tb / (1024**3),
+        "transport_s_mean": tr_mean,
+        "transport_s_range": tr_rng,
+        "GB_s": gbps,
+        "sync_s_mean": sy_mean,
+        "sync_s_range": sy_rng,
+        "setup_s_mean": stat("setup_s")[0],
+        "finalize_s_mean": stat("finalize_s")[0],
     }
 
 
 def main():
     ray.init(address="auto")
-    print(f"MODEL={MODEL} TP={TP} bucket={BUCKET >> 20}MB chunk={CHUNK} rounds={ROUNDS} "
-          f"variants={VARIANTS}", flush=True)
+    print(
+        f"MODEL={MODEL} TP={TP} bucket={BUCKET >> 20}MB chunk={CHUNK} rounds={ROUNDS} variants={VARIANTS}", flush=True
+    )
 
     summaries = []
 
@@ -383,9 +416,12 @@ def main():
     hdr = f"{'variant':<20} {'model_GB':>8} {'transport_s':>12} {'GB/s':>7} {'sync_s':>9} {'setup_s':>8} {'final_s':>8}"
     print(hdr, flush=True)
     for s in summaries:
-        print(f"{s['variant']:<20} {s['model_GB']:>8.1f} {s['transport_s_mean']:>12.2f} "
-              f"{s['GB_s']:>7.2f} {s['sync_s_mean']:>9.2f} {s['setup_s_mean']:>8.2f} "
-              f"{s['finalize_s_mean']:>8.2f}", flush=True)
+        print(
+            f"{s['variant']:<20} {s['model_GB']:>8.1f} {s['transport_s_mean']:>12.2f} "
+            f"{s['GB_s']:>7.2f} {s['sync_s_mean']:>9.2f} {s['setup_s_mean']:>8.2f} "
+            f"{s['finalize_s_mean']:>8.2f}",
+            flush=True,
+        )
     print("(transport_s/sync_s = mean over measured rounds, warmup excluded)", flush=True)
 
 

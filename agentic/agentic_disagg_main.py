@@ -17,12 +17,12 @@ import socket
 import hydra
 import ray
 from omegaconf import OmegaConf
-
 from recipe.agentic.agentic_main import (
     _materialize_harbor_datasets,
     collect_yaml_env_overrides,
 )
 from recipe.agentic.timed_trainer import TimedOneStepOffRayTrainer
+
 from verl.experimental.reward_loop import migrate_legacy_reward_impl
 from verl.experimental.separation.utils import create_resource_pool_manager, create_role_worker_mapping
 from verl.trainer.constants_ppo import get_ppo_ray_runtime_env
@@ -173,9 +173,7 @@ def main(config):
         return any(k.startswith("sglang") for k in n["Resources"])
 
     candidates = [
-        n
-        for n in ray.nodes()
-        if n.get("Alive") and not _is_sglang_worker(n) and _res(n, "CPU") >= _RUNNER_CPUS
+        n for n in ray.nodes() if n.get("Alive") and not _is_sglang_worker(n) and _res(n, "CPU") >= _RUNNER_CPUS
     ]
     if not candidates:
         raise RuntimeError("No non-SGLang node with enough CPU to place AgenticDisaggTaskRunner")

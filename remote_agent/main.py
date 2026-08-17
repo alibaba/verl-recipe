@@ -103,9 +103,10 @@ def _run_ppo_with_proxy(config) -> None:
     # -- _ProxyTaskRunner: TaskRunnerV1 with proxy injection ----------------
     # Defined here (not at module level) so that @ray.remote is applied at
     # call time, after ray is available.
-    from verl.utils.logging_utils import configure_verl_logging
-    from verl.utils.import_utils import load_class_from_fqn
     from pprint import pprint
+
+    from verl.utils.import_utils import load_class_from_fqn
+    from verl.utils.logging_utils import configure_verl_logging
 
     @ray.remote
     class _ProxyTaskRunner:
@@ -119,13 +120,9 @@ def _run_ppo_with_proxy(config) -> None:
         def init_agent_loop_manager(self):
             from verl.trainer.ppo.v1 import AgentLoopManagerTQ
 
-            manager_class_fqn = self.config.actor_rollout_ref.rollout.get(
-                "agent", {}
-            ).get("agent_loop_manager_class")
+            manager_class_fqn = self.config.actor_rollout_ref.rollout.get("agent", {}).get("agent_loop_manager_class")
             if manager_class_fqn:
-                agent_loop_manager_cls = load_class_from_fqn(
-                    manager_class_fqn, "AgentLoopManager"
-                )
+                agent_loop_manager_cls = load_class_from_fqn(manager_class_fqn, "AgentLoopManager")
             else:
                 agent_loop_manager_cls = AgentLoopManagerTQ
 
@@ -145,9 +142,11 @@ def _run_ppo_with_proxy(config) -> None:
             # transfer_queue is optional; use verl's mock-aware import path.
             try:
                 import transfer_queue as tq
+
                 _has_tq = True
             except ImportError:
                 from verl.utils.transferqueue_utils import tq  # mock, raises on use
+
                 _has_tq = False
 
             trainer_cls = get_trainer_cls(config.trainer.v1.trainer_mode)
@@ -168,9 +167,7 @@ def _run_ppo_with_proxy(config) -> None:
                 # Start the LLM proxy as a Ray named actor. The proxy runs
                 # inside this TaskRunner actor (on a worker node), so use
                 # the actor's own IP, NOT the head node's IP.
-                core = RemoteAgentCoreConfig.from_dictconfig(
-                    config.actor_rollout_ref.rollout.remote_agent
-                )
+                core = RemoteAgentCoreConfig.from_dictconfig(config.actor_rollout_ref.rollout.remote_agent)
                 from remote_agent.proxyserver.ray_actor import start_proxy_server
 
                 actor_ip = ray.util.get_node_ip_address()

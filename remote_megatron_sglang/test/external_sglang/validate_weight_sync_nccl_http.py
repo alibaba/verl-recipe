@@ -19,6 +19,7 @@ Correctness: base -> zero embed (generation collapses) -> restore.
 Env: SGLANG_ENDPOINT=http://<pod-ip>:30000  [MODEL_PATH, ZERO_NAME]
 Run from the Ray head:  python3 validate_weight_sync_nccl_http.py
 """
+
 import glob
 import os
 import threading
@@ -32,13 +33,15 @@ ZERO_NAME = os.environ.get("ZERO_NAME", "model.embed_tokens.weight")
 GROUP = "verl_ext_nccl"
 CHUNK = int(os.environ.get("CHUNK_TENSORS", "64"))
 
-_NCCL_RT = {"env_vars": {
-    "NCCL_IB_ADDR_FAMILY": "AF_INET6",
-    "NCCL_IB_ADDR_RANGE": os.environ.get("NCCL_IB_ADDR_RANGE", "2001:db8:80f:e000::/60"),
-    "NCCL_NET_PLUGIN": "none",
-    "NCCL_SOCKET_IFNAME": "eth0",
-    "GLOO_SOCKET_IFNAME": "eth0",
-}}
+_NCCL_RT = {
+    "env_vars": {
+        "NCCL_IB_ADDR_FAMILY": "AF_INET6",
+        "NCCL_IB_ADDR_RANGE": os.environ.get("NCCL_IB_ADDR_RANGE", "2001:db8:80f:e000::/60"),
+        "NCCL_NET_PLUGIN": "none",
+        "NCCL_SOCKET_IFNAME": "eth0",
+        "GLOO_SOCKET_IFNAME": "eth0",
+    }
+}
 
 
 @ray.remote(num_gpus=1, num_cpus=4)
@@ -59,7 +62,7 @@ class Rank0:
                 t = t.to("cuda", dtype=torch.bfloat16)
                 self.weights.append((n, t))
                 total += t.nbytes
-        self._gib = total / (1024 ** 3)
+        self._gib = total / (1024**3)
         return {"n": len(self.weights), "GiB": self._gib}
 
     def _tp_size(self):
@@ -84,19 +87,29 @@ class Rank0:
         world_size = 1 + tp
 
         def _join():
-            requests.post(f"{self.endpoint}/init_weights_update_group", json={
-                "master_address": master_addr, "master_port": master_port,
-                "rank_offset": 1, "world_size": world_size,
-                "group_name": GROUP, "backend": "nccl",
-            }, timeout=600)
+            requests.post(
+                f"{self.endpoint}/init_weights_update_group",
+                json={
+                    "master_address": master_addr,
+                    "master_port": master_port,
+                    "rank_offset": 1,
+                    "world_size": world_size,
+                    "group_name": GROUP,
+                    "backend": "nccl",
+                },
+                timeout=600,
+            )
 
         th = threading.Thread(target=_join, daemon=True)
         th.start()
         torch.cuda.set_device(0)
         t0 = time.time()
         group = init_custom_process_group(
-            backend="nccl", init_method=f"tcp://{master_addr}:{master_port}",
-            world_size=world_size, rank=0, group_name=GROUP,
+            backend="nccl",
+            init_method=f"tcp://{master_addr}:{master_port}",
+            world_size=world_size,
+            rank=0,
+            group_name=GROUP,
         )
         th.join()
         group_s = time.time() - t0
@@ -109,10 +122,17 @@ class Rank0:
             shapes = [list(t.shape) for _, t in batch]
 
             def _post():
-                requests.post(f"{self.endpoint}/update_weights_from_distributed", json={
-                    "names": names, "dtypes": dtypes, "shapes": shapes,
-                    "group_name": GROUP, "flush_cache": False,
-                }, timeout=600)
+                requests.post(
+                    f"{self.endpoint}/update_weights_from_distributed",
+                    json={
+                        "names": names,
+                        "dtypes": dtypes,
+                        "shapes": shapes,
+                        "group_name": GROUP,
+                        "flush_cache": False,
+                    },
+                    timeout=600,
+                )
 
             pth = threading.Thread(target=_post, daemon=True)
             pth.start()
@@ -137,21 +157,30 @@ class Rank0:
         t3 = time.time()
         torch.distributed.destroy_process_group(group)
         try:
-            requests.post(f"{self.endpoint}/destroy_weights_update_group",
-                          json={"group_name": GROUP}, timeout=60)
+            requests.post(f"{self.endpoint}/destroy_weights_update_group", json={"group_name": GROUP}, timeout=60)
         except Exception:
             pass
         destroy_s = time.time() - t3
-        return {"world_size": world_size, "group_s": group_s, "bcast_s": bcast_s,
-                "flush_s": flush_s, "destroy_s": destroy_s,
-                "total_s": time.time() - t_all, "GiB": self._gib}
+        return {
+            "world_size": world_size,
+            "group_s": group_s,
+            "bcast_s": bcast_s,
+            "flush_s": flush_s,
+            "destroy_s": destroy_s,
+            "total_s": time.time() - t_all,
+            "GiB": self._gib,
+        }
 
 
 def generate(ep):
-    r = requests.post(f"{ep}/generate", json={
-        "text": "The capital of France is",
-        "sampling_params": {"temperature": 0, "max_new_tokens": 16},
-    }, timeout=120)
+    r = requests.post(
+        f"{ep}/generate",
+        json={
+            "text": "The capital of France is",
+            "sampling_params": {"temperature": 0, "max_new_tokens": 16},
+        },
+        timeout=120,
+    )
     return r.json()["text"]
 
 
@@ -164,15 +193,19 @@ def main():
     # Benchmark mode: N unchanged syncs, warmup (round 0) excluded.
     if os.environ.get("BENCH"):
         import statistics
+
         rounds = int(os.environ.get("ROUNDS", "6"))
         rows = []
         for i in range(rounds):
             r = ray.get(a.sync.remote(""))
             tag = "warmup" if i == 0 else "measure"
-            print(f"  round {i} [{tag}]: total={r['total_s']:.3f}s "
-                  f"(group={r['group_s']:.3f}s bcast={r['bcast_s']:.3f}s "
-                  f"flush={r['flush_s']:.3f}s destroy={r['destroy_s']:.3f}s) "
-                  f"bw={r['GiB'] / r['bcast_s']:.1f} GiB/s", flush=True)
+            print(
+                f"  round {i} [{tag}]: total={r['total_s']:.3f}s "
+                f"(group={r['group_s']:.3f}s bcast={r['bcast_s']:.3f}s "
+                f"flush={r['flush_s']:.3f}s destroy={r['destroy_s']:.3f}s) "
+                f"bw={r['GiB'] / r['bcast_s']:.1f} GiB/s",
+                flush=True,
+            )
             rows.append(r)
         m = rows[1:]
         gib = m[0]["GiB"]
@@ -180,11 +213,14 @@ def main():
         def mean(k):
             return statistics.mean(x[k] for x in m)
 
-        print(f"\nSUMMARY (n={len(m)}, {gib:.2f} GiB, world_size={m[0]['world_size']}): "
-              f"total={mean('total_s'):.3f}s = group {mean('group_s'):.3f} + "
-              f"bcast {mean('bcast_s'):.3f} + flush {mean('flush_s'):.3f} + destroy {mean('destroy_s'):.3f}  |  "
-              f"bcast_bw={gib / mean('bcast_s'):.1f} GiB/s  "
-              f"total_range=[{min(x['total_s'] for x in m):.3f},{max(x['total_s'] for x in m):.3f}]", flush=True)
+        print(
+            f"\nSUMMARY (n={len(m)}, {gib:.2f} GiB, world_size={m[0]['world_size']}): "
+            f"total={mean('total_s'):.3f}s = group {mean('group_s'):.3f} + "
+            f"bcast {mean('bcast_s'):.3f} + flush {mean('flush_s'):.3f} + destroy {mean('destroy_s'):.3f}  |  "
+            f"bcast_bw={gib / mean('bcast_s'):.1f} GiB/s  "
+            f"total_range=[{min(x['total_s'] for x in m):.3f},{max(x['total_s'] for x in m):.3f}]",
+            flush=True,
+        )
         print("DONE", flush=True)
         return
 

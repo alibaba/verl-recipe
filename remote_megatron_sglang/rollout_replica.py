@@ -140,7 +140,9 @@ class ExternalSGLangProxyServer:
                 if len(otl) != len(token_ids):
                     logger.error(
                         "output_token_logprobs len %d != output_ids len %d (rid=%s)",
-                        len(otl), len(token_ids), request_id,
+                        len(otl),
+                        len(token_ids),
+                        request_id,
                     )
                 token_ids, log_probs = [], []
 

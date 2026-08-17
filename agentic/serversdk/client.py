@@ -272,9 +272,7 @@ class AgentRunClient:
         )
 
         # Archive the local task directory off the event loop.
-        archive_bytes, _dir_name = await asyncio.to_thread(
-            _create_task_archive, task_path
-        )
+        archive_bytes, _dir_name = await asyncio.to_thread(_create_task_archive, task_path)
 
         url = f"{self.server_url}/api/v1/runs"
         logger.info("Submitting agent run to %s task=%s", url, task_path)
@@ -283,9 +281,7 @@ class AgentRunClient:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 response = await client.post(
                     url,
-                    data={
-                        "metadata": request.model_dump_json(exclude_none=True)
-                    },
+                    data={"metadata": request.model_dump_json(exclude_none=True)},
                     files={
                         "task_archive": (
                             "task.tar.gz",
@@ -309,10 +305,7 @@ class AgentRunClient:
                 status="failed",
                 rewards={"reward": 0.0},
                 rollout_details=None,
-                error=(
-                    f"Server returned HTTP {response.status_code}: "
-                    f"{response.text}"
-                ),
+                error=(f"Server returned HTTP {response.status_code}: {response.text}"),
             )
 
         return AgentRunResult.model_validate(response.json())
@@ -363,9 +356,7 @@ class AgentRunClient:
             llm_proxy_url=llm_proxy_url,
         )
 
-        archive_bytes, _dir_name = await asyncio.to_thread(
-            _create_task_archive, task_path
-        )
+        archive_bytes, _dir_name = await asyncio.to_thread(_create_task_archive, task_path)
 
         url = f"{self.server_url}/api/v1/runs/async"
         logger.info("Submitting async task to %s task=%s", url, task_path)
@@ -376,9 +367,7 @@ class AgentRunClient:
         async with _build_async_client(min(self.timeout, 600.0)) as client:
             response = await client.post(
                 url,
-                data={
-                    "metadata": request.model_dump_json(exclude_none=True)
-                },
+                data={"metadata": request.model_dump_json(exclude_none=True)},
                 files={
                     "task_archive": (
                         "task.tar.gz",
@@ -389,9 +378,7 @@ class AgentRunClient:
             )
 
         if response.status_code != 200:
-            raise AgentRunError(
-                f"Server returned HTTP {response.status_code}: {response.text}"
-            )
+            raise AgentRunError(f"Server returned HTTP {response.status_code}: {response.text}")
 
         data = response.json()
         return data["run_id"]
@@ -423,34 +410,27 @@ class AgentRunClient:
         async with _build_async_client(request_timeout) as client:
             while time.monotonic() < deadline:
                 try:
-                    resp = await client.get(
-                        f"{self.server_url}/api/v1/runs/async/{run_id}/status"
-                    )
+                    resp = await client.get(f"{self.server_url}/api/v1/runs/async/{run_id}/status")
                     if resp.status_code == 200:
                         data = resp.json()
                         status = data.get("status")
                         if status in ("completed", "failed", "timeout"):
                             return data
-                        logger.debug(
-                            "run_id=%s status=%s, polling...", run_id, status
-                        )
+                        logger.debug("run_id=%s status=%s, polling...", run_id, status)
                     elif resp.status_code == 404:
                         # The run may not be registered yet right after submit;
                         # keep polling until it appears (or the deadline hits).
                         last_error = "HTTP 404 (run not yet registered)"
-                        logger.debug(
-                            "run_id=%s status poll: %s", run_id, last_error
-                        )
+                        logger.debug("run_id=%s status poll: %s", run_id, last_error)
                     else:
                         last_error = f"HTTP {resp.status_code}: {resp.text[:200]}"
-                        logger.warning(
-                            "run_id=%s status poll failed: %s", run_id, last_error
-                        )
+                        logger.warning("run_id=%s status poll failed: %s", run_id, last_error)
                 except (httpx.HTTPError, OSError, asyncio.TimeoutError) as e:
                     last_error = f"{type(e).__name__}: {e}"
                     logger.warning(
                         "run_id=%s status poll error (will retry): %s",
-                        run_id, last_error,
+                        run_id,
+                        last_error,
                     )
                 await asyncio.sleep(poll_interval)
 
@@ -462,15 +442,11 @@ class AgentRunClient:
     async def get_async_result(self, run_id: str) -> dict[str, Any] | None:
         """Fetch the result of a completed async task."""
         async with _build_async_client(60.0) as client:
-            resp = await client.get(
-                f"{self.server_url}/api/v1/runs/async/{run_id}/result"
-            )
+            resp = await client.get(f"{self.server_url}/api/v1/runs/async/{run_id}/result")
         if resp.status_code == 404:
             return None
         if resp.status_code != 200:
-            raise AgentRunError(
-                f"Result fetch failed: HTTP {resp.status_code}"
-            )
+            raise AgentRunError(f"Result fetch failed: HTTP {resp.status_code}")
         return resp.json()
 
     async def run_async_task(
@@ -492,9 +468,7 @@ class AgentRunClient:
         run_id = await self.submit_async_task(**submit_kwargs)
         logger.info("Async task submitted: run_id=%s", run_id)
 
-        status_data = await self.poll_async_task(
-            run_id, poll_interval=poll_interval, timeout=poll_timeout
-        )
+        status_data = await self.poll_async_task(run_id, poll_interval=poll_interval, timeout=poll_timeout)
 
         result_data = None
         try:
@@ -504,8 +478,9 @@ class AgentRunClient:
             # because the full-result fetch hit a transient error — fall back to
             # the rewards recorded in the status document.
             logger.warning(
-                "run_id=%s: fetching full result failed (%s); "
-                "falling back to status document", run_id, e,
+                "run_id=%s: fetching full result failed (%s); falling back to status document",
+                run_id,
+                e,
             )
 
         if result_data:

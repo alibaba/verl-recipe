@@ -12,17 +12,16 @@ import sys
 import tempfile
 import time
 import types
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
-
 from recipe.agentic.proxyserver.models import TrainingRoundTiming
 from recipe.agentic.proxyserver.recorder import SessionRecorder
-
 
 # ---------------------------------------------------------------------------
 # TrainingRoundTiming model tests
 # ---------------------------------------------------------------------------
+
 
 class TestTrainingRoundTimingModel:
     """Verify the Pydantic model accepts all phase fields."""
@@ -73,10 +72,14 @@ class TestTrainingRoundTimingModel:
     def test_round_trip_json(self):
         now = time.time()
         t = TrainingRoundTiming(
-            epoch=0, global_step=2,
-            step_start=now, step_end=now + 10,
-            reward_start=now + 1, reward_end=now + 3,
-            update_actor_start=now + 5, update_actor_end=now + 8,
+            epoch=0,
+            global_step=2,
+            step_start=now,
+            step_end=now + 10,
+            reward_start=now + 1,
+            reward_end=now + 3,
+            update_actor_start=now + 5,
+            update_actor_end=now + 8,
         )
         dumped = json.loads(t.model_dump_json())
         restored = TrainingRoundTiming.model_validate(dumped)
@@ -88,24 +91,37 @@ class TestTrainingRoundTimingModel:
 # SessionRecorder timing persistence tests
 # ---------------------------------------------------------------------------
 
+
 class TestRecorderTimingPersistence:
     """Verify record / list / load round-trips all phase fields."""
 
     def _make_timing(self, epoch=0, step=1, **overrides) -> TrainingRoundTiming:
         now = time.time()
         defaults = dict(
-            epoch=epoch, global_step=step,
-            step_start=now, step_end=now + 60,
-            inference_start=now + 1, inference_end=now + 10,
-            weight_sync_start=now + 2, weight_sync_end=now + 5,
-            reward_start=now + 11, reward_end=now + 15,
-            log_prob_start=now + 16, log_prob_end=now + 20,
-            ref_log_prob_start=now + 21, ref_log_prob_end=now + 25,
-            critic_start=now + 26, critic_end=now + 30,
-            advantage_start=now + 31, advantage_end=now + 33,
-            update_critic_start=now + 34, update_critic_end=now + 40,
-            update_actor_start=now + 41, update_actor_end=now + 50,
-            checkpoint_start=now + 51, checkpoint_end=now + 55,
+            epoch=epoch,
+            global_step=step,
+            step_start=now,
+            step_end=now + 60,
+            inference_start=now + 1,
+            inference_end=now + 10,
+            weight_sync_start=now + 2,
+            weight_sync_end=now + 5,
+            reward_start=now + 11,
+            reward_end=now + 15,
+            log_prob_start=now + 16,
+            log_prob_end=now + 20,
+            ref_log_prob_start=now + 21,
+            ref_log_prob_end=now + 25,
+            critic_start=now + 26,
+            critic_end=now + 30,
+            advantage_start=now + 31,
+            advantage_end=now + 33,
+            update_critic_start=now + 34,
+            update_critic_end=now + 40,
+            update_actor_start=now + 41,
+            update_actor_end=now + 50,
+            checkpoint_start=now + 51,
+            checkpoint_end=now + 55,
         )
         defaults.update(overrides)
         return TrainingRoundTiming(**defaults)
@@ -157,6 +173,7 @@ class TestRecorderTimingPersistence:
 # ---------------------------------------------------------------------------
 # Helpers to import TimedOneStepOffRayTrainer with mocked heavy deps
 # ---------------------------------------------------------------------------
+
 
 def _stub_verl_modules():
     """Insert lightweight stubs for verl.* into sys.modules so that
@@ -233,6 +250,7 @@ def timed_trainer_module():
     saved = sys.modules.pop(mod_key, None)
     try:
         import importlib
+
         mod = importlib.import_module(mod_key)
         yield mod, FakeBase
     finally:
@@ -247,6 +265,7 @@ def timed_trainer_module():
 # ---------------------------------------------------------------------------
 # TimedOneStepOffRayTrainer phase override tests
 # ---------------------------------------------------------------------------
+
 
 class TestTimedTrainerOverrides:
     """Verify that each _fit_* override records timestamps in _timing_data."""
@@ -349,6 +368,7 @@ class TestTimedTrainerOverrides:
 # Timing record assembly test (fit_step)
 # ---------------------------------------------------------------------------
 
+
 class TestTimingRecordAssembly:
     """Verify that fit_step assembles all phase timestamps into the record."""
 
@@ -397,9 +417,7 @@ class TestTimingRecordAssembly:
         FakeBase.fit_step = fake_parent_fit_step
         try:
             loop = asyncio.new_event_loop()
-            result = loop.run_until_complete(
-                trainer.fit_step("batch_future", "iterator")
-            )
+            result = loop.run_until_complete(trainer.fit_step("batch_future", "iterator"))
             loop.close()
         finally:
             FakeBase.fit_step = original
@@ -414,16 +432,26 @@ class TestTimingRecordAssembly:
         assert record["step_end"] is not None
 
         expected_phase_keys = [
-            "inference_start", "inference_end",
-            "weight_sync_start", "weight_sync_end",
-            "reward_start", "reward_end",
-            "log_prob_start", "log_prob_end",
-            "ref_log_prob_start", "ref_log_prob_end",
-            "critic_start", "critic_end",
-            "advantage_start", "advantage_end",
-            "update_critic_start", "update_critic_end",
-            "update_actor_start", "update_actor_end",
-            "checkpoint_start", "checkpoint_end",
+            "inference_start",
+            "inference_end",
+            "weight_sync_start",
+            "weight_sync_end",
+            "reward_start",
+            "reward_end",
+            "log_prob_start",
+            "log_prob_end",
+            "ref_log_prob_start",
+            "ref_log_prob_end",
+            "critic_start",
+            "critic_end",
+            "advantage_start",
+            "advantage_end",
+            "update_critic_start",
+            "update_critic_end",
+            "update_actor_start",
+            "update_actor_end",
+            "checkpoint_start",
+            "checkpoint_end",
         ]
         for key in expected_phase_keys:
             assert key in record, f"Missing key: {key}"

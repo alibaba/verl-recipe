@@ -43,20 +43,17 @@ from typing import Any, Optional
 from urllib.parse import urlparse
 
 import aiohttp
-from transformers import AutoProcessor, AutoTokenizer
-
 from recipe.agentic.agent_loop.config import RemoteAgentConfig
 from recipe.agentic.proxyserver.models import SessionRecord
 from recipe.agentic.serversdk.client import AgentRunClient
+from transformers import AutoProcessor, AutoTokenizer
 
 logger = logging.getLogger(__name__)
 # Make sure diagnostic INFO/DEBUG lines surface in Ray worker stdout even
 # when the root logger is configured at WARNING level.
 if not logger.handlers:
     _h = logging.StreamHandler()
-    _h.setFormatter(
-        logging.Formatter("%(levelname)s:%(asctime)s:%(name)s:%(message)s")
-    )
+    _h.setFormatter(logging.Formatter("%(levelname)s:%(asctime)s:%(name)s:%(message)s"))
     logger.addHandler(_h)
 logger.setLevel(logging.DEBUG)
 logger.propagate = True
@@ -64,10 +61,7 @@ logger.propagate = True
 logger.setLevel(os.getenv("VERL_LOGGING_LEVEL", "DEBUG"))
 # Late imports to avoid hard dependency on verl at module level.
 try:
-    from verl.experimental.agent_loop.agent_loop import (AgentLoopBase,
-                                                         AgentLoopOutput,
-                                                         DictConfigWrap,
-                                                         register)
+    from verl.experimental.agent_loop.agent_loop import AgentLoopBase, AgentLoopOutput, DictConfigWrap, register
     from verl.workers.rollout.llm_server import LLMServerClient
 except ImportError:  # pragma: no cover
     from dataclasses import dataclass
@@ -99,12 +93,14 @@ except ImportError:  # pragma: no cover
     def register(name):  # type: ignore[no-redef]
         def decorator(cls):
             return cls
+
         return decorator
 
 
 # ---------------------------------------------------------------------------
 # RemoteAgentLoop
 # ---------------------------------------------------------------------------
+
 
 @register("remote_agent")
 class RemoteAgentLoop(AgentLoopBase):
@@ -294,13 +290,10 @@ class RemoteAgentLoop(AgentLoopBase):
         if self._inference_worker is not None:
             return
 
-        from recipe.agentic.proxyserver.worker_client import \
-            InferenceWorkerClient
+        from recipe.agentic.proxyserver.worker_client import InferenceWorkerClient
 
         # Build the WebSocket URL from the proxy HTTP URL
-        ws_url = self.proxy_server_url.replace("http://", "ws://").replace(
-            "https://", "wss://"
-        )
+        ws_url = self.proxy_server_url.replace("http://", "ws://").replace("https://", "wss://")
         if not ws_url.endswith("/"):
             ws_url += "/"
         ws_url += "ws/worker"
@@ -335,9 +328,7 @@ class RemoteAgentLoop(AgentLoopBase):
             tool_format=tool_format,
         )
         await self._inference_worker.start()
-        logger.info(
-            "Inference worker started, connecting to proxy at %s", ws_url
-        )
+        logger.info("Inference worker started, connecting to proxy at %s", ws_url)
 
     async def _proxy_request(
         self,
@@ -357,9 +348,7 @@ class RemoteAgentLoop(AgentLoopBase):
         for attempt in range(max_retries):
             try:
                 async with aiohttp.ClientSession() as session:
-                    async with session.request(
-                        method, url, timeout=aiohttp.ClientTimeout(total=30)
-                    ) as resp:
+                    async with session.request(method, url, timeout=aiohttp.ClientTimeout(total=30)) as resp:
                         body = await resp.json() if resp.content_type == "application/json" else await resp.text()
                         if resp.status < 500:
                             return resp.status, body
@@ -368,17 +357,19 @@ class RemoteAgentLoop(AgentLoopBase):
                 last_error = e
 
             if attempt + 1 < max_retries:
-                delay = min(base_delay * (2 ** attempt), max_delay)
+                delay = min(base_delay * (2**attempt), max_delay)
                 logger.warning(
-                    "Proxy request %s %s failed (attempt %d/%d): %s. "
-                    "Retrying in %.1fs...",
-                    method, url, attempt + 1, max_retries, last_error, delay,
+                    "Proxy request %s %s failed (attempt %d/%d): %s. Retrying in %.1fs...",
+                    method,
+                    url,
+                    attempt + 1,
+                    max_retries,
+                    last_error,
+                    delay,
                 )
                 await asyncio.sleep(delay)
 
-        raise RuntimeError(
-            f"Proxy request {method} {url} failed after {max_retries} attempts: {last_error}"
-        )
+        raise RuntimeError(f"Proxy request {method} {url} failed after {max_retries} attempts: {last_error}")
 
     async def _register_session(self, proxy_url: str, trial_id: str) -> None:
         """POST /sessions/{trial_id} to register a new session."""
@@ -452,7 +443,10 @@ class RemoteAgentLoop(AgentLoopBase):
                 delay = self.retry_base_delay * (2 ** (attempt - 1))
                 logger.warning(
                     "Retrying trial %s (attempt %d/%d) after %.1fs delay",
-                    trial_id, attempt + 1, self.max_retries, delay,
+                    trial_id,
+                    attempt + 1,
+                    self.max_retries,
+                    delay,
                 )
                 await asyncio.sleep(delay)
                 try:
@@ -485,13 +479,14 @@ class RemoteAgentLoop(AgentLoopBase):
                     return result
 
                 if result.status in ("failed", "error"):
-                    last_error = RuntimeError(
-                        f"Agent run {result.status}: {result.error or 'unknown'}"
-                    )
+                    last_error = RuntimeError(f"Agent run {result.status}: {result.error or 'unknown'}")
                     logger.warning(
                         "Trial %s attempt %d/%d %s: %s",
-                        trial_id, attempt + 1, self.max_retries,
-                        result.status, result.error,
+                        trial_id,
+                        attempt + 1,
+                        self.max_retries,
+                        result.status,
+                        result.error,
                     )
                     continue
 
@@ -502,15 +497,20 @@ class RemoteAgentLoop(AgentLoopBase):
                 last_error = e
                 logger.warning(
                     "Trial %s attempt %d/%d raised %s: %s",
-                    trial_id, attempt + 1, self.max_retries,
-                    type(e).__name__, e,
+                    trial_id,
+                    attempt + 1,
+                    self.max_retries,
+                    type(e).__name__,
+                    e,
                 )
                 continue
 
         # All retries exhausted — return a synthetic error result
         logger.error(
             "Trial %s: all %d retries exhausted. Last error: %s",
-            trial_id, self.max_retries, last_error,
+            trial_id,
+            self.max_retries,
+            last_error,
         )
         return AgentRunResult(
             run_id="",
@@ -573,8 +573,7 @@ class RemoteAgentLoop(AgentLoopBase):
         import socket
 
         from harbor.models.trial.config import AgentConfig as TrialAgentConfig
-        from harbor.models.trial.config import \
-            EnvironmentConfig as TrialEnvironmentConfig
+        from harbor.models.trial.config import EnvironmentConfig as TrialEnvironmentConfig
         from harbor.models.trial.config import TaskConfig, TrialConfig
         from harbor.trial.trial import Trial
         from recipe.agentic.serversdk.client import AgentRunResult
@@ -590,23 +589,32 @@ class RemoteAgentLoop(AgentLoopBase):
 
         logger.info(
             "[local_trial:%s] host=%s pid=%d HOME=%s cwd=%s",
-            trial_id, host, os.getpid(),
-            os.environ.get("HOME"), os.getcwd(),
+            trial_id,
+            host,
+            os.getpid(),
+            os.environ.get("HOME"),
+            os.getcwd(),
         )
         logger.info(
             "[local_trial:%s] task_path=%s exists=%s import_path=%s",
-            trial_id, task_path, os.path.isdir(task_path),
+            trial_id,
+            task_path,
+            os.path.isdir(task_path),
             self.environment_import_path,
         )
         logger.info(
-            "[local_trial:%s] env_kwargs=%s", trial_id, env_kwargs,
+            "[local_trial:%s] env_kwargs=%s",
+            trial_id,
+            env_kwargs,
         )
         kubeconfig = env_kwargs.get("kubeconfig") if isinstance(env_kwargs, dict) else None
         if kubeconfig:
             kc_path = os.path.expanduser(str(kubeconfig))
             logger.info(
                 "[local_trial:%s] kubeconfig=%s expanded=%s exists=%s readable=%s",
-                trial_id, kubeconfig, kc_path,
+                trial_id,
+                kubeconfig,
+                kc_path,
                 os.path.exists(kc_path),
                 os.access(kc_path, os.R_OK) if os.path.exists(kc_path) else False,
             )
@@ -633,7 +641,9 @@ class RemoteAgentLoop(AgentLoopBase):
         except Exception as e:
             logger.exception(
                 "[local_trial:%s] Trial.create failed: %s: %s",
-                trial_id, type(e).__name__, e,
+                trial_id,
+                type(e).__name__,
+                e,
             )
             raise
 
@@ -642,16 +652,14 @@ class RemoteAgentLoop(AgentLoopBase):
         except Exception as e:
             logger.exception(
                 "[local_trial:%s] trial.run raised %s: %s",
-                trial_id, type(e).__name__, e,
+                trial_id,
+                type(e).__name__,
+                e,
             )
             raise
 
         if trial_result.exception_info is None:
-            rewards = (
-                trial_result.verifier_result.rewards
-                if trial_result.verifier_result is not None
-                else {}
-            )
+            rewards = trial_result.verifier_result.rewards if trial_result.verifier_result is not None else {}
             return AgentRunResult(
                 run_id=trial_id,
                 status="completed",
@@ -665,13 +673,17 @@ class RemoteAgentLoop(AgentLoopBase):
         tb_text = getattr(exc, "traceback", None) or getattr(exc, "stack_trace", None)
         logger.error(
             "[local_trial:%s] trial returned exception %s: %s\n%s",
-            trial_id, exc.exception_type, exc.exception_message,
+            trial_id,
+            exc.exception_type,
+            exc.exception_message,
             tb_text or "<no traceback in exception_info>",
         )
         # Also write the full exception_info repr to make sure nothing is hidden.
         try:
             logger.debug(
-                "[local_trial:%s] full exception_info=%r", trial_id, exc,
+                "[local_trial:%s] full exception_info=%r",
+                trial_id,
+                exc,
             )
         except Exception:
             pass
@@ -695,7 +707,8 @@ class RemoteAgentLoop(AgentLoopBase):
             logprobs captured by the proxy.
         """
         import shortuuid
-        messages = list(kwargs["raw_prompt"])
+
+        list(kwargs["raw_prompt"])
         instance_id = kwargs.get("instance_id", "")
         trial_id = instance_id + "-" + shortuuid.uuid()
 
@@ -757,8 +770,7 @@ class RemoteAgentLoop(AgentLoopBase):
 
             if session is None or not session.turns:
                 logger.warning(
-                    "Session %s has no recorded turns — the agent may not "
-                    "have called the proxy.",
+                    "Session %s has no recorded turns — the agent may not have called the proxy.",
                     trial_id,
                 )
                 message = kwargs.get("problem_statement", "")
@@ -789,9 +801,7 @@ class RemoteAgentLoop(AgentLoopBase):
             # 6. Reconstruct verl output — token_ids/logprobs from worker cache
             initial_messages = session.turns[0].request_messages
             worker_cache = (
-                self._inference_worker.get_session_cache(trial_id)
-                if self._inference_worker is not None
-                else []
+                self._inference_worker.get_session_cache(trial_id) if self._inference_worker is not None else []
             )
             output = self._reconstruct_output(session, initial_messages, worker_cache)
             output.metrics = metrics
@@ -844,12 +854,16 @@ class RemoteAgentLoop(AgentLoopBase):
         messages = self._normalize_messages(messages)
         if self.processor is not None:
             raw_prompt = self.processor.apply_chat_template(
-                messages, add_generation_prompt=True, tokenize=False,
+                messages,
+                add_generation_prompt=True,
+                tokenize=False,
             )
             model_inputs = self.processor(text=[raw_prompt], return_tensors="pt")
             return model_inputs["input_ids"].squeeze(0).tolist()
         return self.tokenizer.apply_chat_template(
-            messages, add_generation_prompt=True, tokenize=True,
+            messages,
+            add_generation_prompt=True,
+            tokenize=True,
         )
 
     def _tokenize_tool_messages(self, messages: list[dict[str, Any]]) -> list[int]:
@@ -868,33 +882,41 @@ class RemoteAgentLoop(AgentLoopBase):
         if prefix_msgs:
             if self.processor is not None:
                 raw_pfx = self.processor.apply_chat_template(
-                    prefix_msgs, add_generation_prompt=True, tokenize=False,
+                    prefix_msgs,
+                    add_generation_prompt=True,
+                    tokenize=False,
                 )
                 pfx_ids = self.processor(text=[raw_pfx], return_tensors="pt")["input_ids"].squeeze(0).tolist()
             else:
                 pfx_ids = self.tokenizer.apply_chat_template(
-                    prefix_msgs, add_generation_prompt=True, tokenize=True,
+                    prefix_msgs,
+                    add_generation_prompt=True,
+                    tokenize=True,
                 )
         else:
             pfx_ids = []
 
         if self.processor is not None:
             raw = self.processor.apply_chat_template(
-                full_msgs, add_generation_prompt=True, tokenize=False,
+                full_msgs,
+                add_generation_prompt=True,
+                tokenize=False,
             )
             inputs = self.processor(text=[raw], return_tensors="pt")
             ids = inputs["input_ids"].squeeze(0).tolist()
         else:
             ids = self.tokenizer.apply_chat_template(
-                full_msgs, add_generation_prompt=True, tokenize=True,
+                full_msgs,
+                add_generation_prompt=True,
+                tokenize=True,
             )
 
         if pfx_ids and ids[: len(pfx_ids)] == pfx_ids:
-            ids = ids[len(pfx_ids):]
+            ids = ids[len(pfx_ids) :]
 
         sys_ids = self._get_system_prompt_ids()
         if sys_ids and ids[: len(sys_ids)] == sys_ids:
-            ids = ids[len(sys_ids):]
+            ids = ids[len(sys_ids) :]
         return ids
 
     def _get_system_prompt_ids(self) -> list[int]:
@@ -903,13 +925,17 @@ class RemoteAgentLoop(AgentLoopBase):
         try:
             if self.processor is not None:
                 raw = self.processor.apply_chat_template(
-                    [], add_generation_prompt=False, tokenize=False,
+                    [],
+                    add_generation_prompt=False,
+                    tokenize=False,
                 )
                 inputs = self.processor(text=[raw], return_tensors="pt")
                 self._cached_sys_ids = inputs["input_ids"].squeeze(0).tolist()
             else:
                 self._cached_sys_ids = self.tokenizer.apply_chat_template(
-                    [], add_generation_prompt=False, tokenize=True,
+                    [],
+                    add_generation_prompt=False,
+                    tokenize=True,
                 )
         except Exception:
             self._cached_sys_ids = []
@@ -953,9 +979,7 @@ class RemoteAgentLoop(AgentLoopBase):
                 turn_ids = turn.completion_token_ids
                 turn_logprobs = turn.completion_logprobs
             else:
-                turn_ids = self.tokenizer.encode(
-                    turn.completion_text, add_special_tokens=False
-                )
+                turn_ids = self.tokenizer.encode(turn.completion_text, add_special_tokens=False)
                 turn_logprobs = [0.0] * len(turn_ids)
 
             response_ids.extend(turn_ids)
@@ -971,10 +995,7 @@ class RemoteAgentLoop(AgentLoopBase):
             if i + 1 < len(session.turns):
                 next_turn = session.turns[i + 1]
                 new_messages = next_turn.request_messages
-                tool_messages = [
-                    m for m in new_messages
-                    if m.get("role") in ("tool", "user", "system")
-                ]
+                tool_messages = [m for m in new_messages if m.get("role") in ("tool", "user", "system")]
                 if tool_messages:
                     tool_ids = self._tokenize_tool_messages(tool_messages)
                     response_ids.extend(tool_ids)

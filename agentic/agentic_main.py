@@ -74,9 +74,7 @@ def collect_yaml_env_overrides(config) -> dict[str, str]:
     env_vars: dict[str, str] = {}
 
     proxy_cfg = config.get("proxy_server", {}) or {}
-    llm_proxy_ip = (
-        proxy_cfg.get("llm_proxy_ip", None) if hasattr(proxy_cfg, "get") else None
-    )
+    llm_proxy_ip = proxy_cfg.get("llm_proxy_ip", None) if hasattr(proxy_cfg, "get") else None
     if llm_proxy_ip not in (None, "") and not os.environ.get("LLM_PROXY_IP"):
         env_vars["LLM_PROXY_IP"] = str(llm_proxy_ip)
 

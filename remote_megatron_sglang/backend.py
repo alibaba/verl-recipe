@@ -36,12 +36,15 @@ import logging
 from typing import Any
 
 from omegaconf import DictConfig, OmegaConf
-
 from recipe.remote_megatron_sglang import rollout_replica  # noqa: F401  registers megatron_sglang replica
 from recipe.remote_megatron_sglang.infer_client import SGLangInferClient
 from recipe.remote_megatron_sglang.train_client import MegatronTrainClient
 from recipe.remote_megatron_sglang.weight_sync import WeightSyncRegistry
-from verl.remote_backend import RemoteBackend, RemoteBackendRegistry
+
+try:
+    from verl.remote_backend import RemoteBackend, RemoteBackendRegistry
+except ImportError:  # upstream verl main does not ship verl.remote_backend (PR #6422)
+    from recipe.remote_megatron_sglang.remote_backend_compat import RemoteBackend, RemoteBackendRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -92,9 +95,7 @@ class MegatronSGLangBackend(RemoteBackend):
             endpoints=OmegaConf.to_container(cfg.sglang_endpoints, resolve=True),
             timeout=cfg.get("infer_timeout", 1800.0),
         )
-        transport = WeightSyncRegistry.create(
-            cfg.weight_sync.transport, cfg.weight_sync, train_client, infer_client
-        )
+        transport = WeightSyncRegistry.create(cfg.weight_sync.transport, cfg.weight_sync, train_client, infer_client)
         # `handle` re-attach is a no-op beyond rebuilding the (stateless HTTP)
         # clients: the forwarder receives both main_config and the handle, and
         # everything it needs is derivable from main_config. The handle exists

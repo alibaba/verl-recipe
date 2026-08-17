@@ -22,6 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 # cache directly from HTTP data, so stub it out to avoid the heavy dependency.
 if "torch" not in sys.modules:
     import types as _types
+
     sys.modules["torch"] = _types.SimpleNamespace(load=None)
 import trace_timeline_viewer as ttv  # noqa: E402
 
@@ -94,12 +95,17 @@ def _span(events, name, start, end, span_id, parent, attrs=None):
     if not (_valid(start) and _valid(end)) or end < start:
         return False
     events.append(
-        {"ts": start, "type": "span_start", "name": name, "span_id": span_id,
-         "parent_span_id": parent, "attrs": attrs or {}}
+        {
+            "ts": start,
+            "type": "span_start",
+            "name": name,
+            "span_id": span_id,
+            "parent_span_id": parent,
+            "attrs": attrs or {},
+        }
     )
     events.append(
-        {"ts": end, "type": "span_end", "name": name, "span_id": span_id,
-         "parent_span_id": parent, "attrs": {}}
+        {"ts": end, "type": "span_end", "name": name, "span_id": span_id, "parent_span_id": parent, "attrs": {}}
     )
     return True
 
@@ -120,28 +126,32 @@ def build_training_samples(base: str):
         ep = t.get("epoch")
         sid = f"step:{ep}:{gs}"
         ev = []
-        _span(ev, f"step {ep}/{gs}", t.get("step_start"), t.get("step_end"), sid, None,
-              attrs={k: v for k, v in (t.get("phase_durations") or {}).items()
-                     if isinstance(v, (int, float))})
-        _span(ev, "inference", t.get("inference_start"), t.get("inference_end"),
-              f"{sid}:inf", sid)
-        _span(ev, "weight_sync", t.get("weight_sync_start"), t.get("weight_sync_end"),
-              f"{sid}:ws", sid)
-        _span(ev, "training", t.get("training_start"), t.get("training_end"),
-              f"{sid}:train", sid)
-        _span(ev, "update_actor", t.get("update_actor_start"), t.get("update_actor_end"),
-              f"{sid}:ua", f"{sid}:train")
+        _span(
+            ev,
+            f"step {ep}/{gs}",
+            t.get("step_start"),
+            t.get("step_end"),
+            sid,
+            None,
+            attrs={k: v for k, v in (t.get("phase_durations") or {}).items() if isinstance(v, (int, float))},
+        )
+        _span(ev, "inference", t.get("inference_start"), t.get("inference_end"), f"{sid}:inf", sid)
+        _span(ev, "weight_sync", t.get("weight_sync_start"), t.get("weight_sync_end"), f"{sid}:ws", sid)
+        _span(ev, "training", t.get("training_start"), t.get("training_end"), f"{sid}:train", sid)
+        _span(ev, "update_actor", t.get("update_actor_start"), t.get("update_actor_end"), f"{sid}:ua", f"{sid}:train")
         if not ev:
             continue
-        samples.append({
-            "index": f"train {ep}/{gs}",
-            "source": "training",
-            "status": "step",
-            "label": f"step {ep}/{gs}",
-            "reward": None,
-            "metadata": {},
-            "trace": {"events": ev, "trace_id": sid, "attempt": gs or 0},
-        })
+        samples.append(
+            {
+                "index": f"train {ep}/{gs}",
+                "source": "training",
+                "status": "step",
+                "label": f"step {ep}/{gs}",
+                "reward": None,
+                "metadata": {},
+                "trace": {"events": ev, "trace_id": sid, "attempt": gs or 0},
+            }
+        )
     return samples
 
 
@@ -188,10 +198,8 @@ def _session_sample(base: str, sid: str, harbor: dict):
             "node_id": turn.get("node_id"),
             "relay_round_trip_ms": tm.get("relay_round_trip_ms"),
             "queue_ms": _ms(req, tm.get("worker_received_at")),
-            "inference_ms": _ms(tm.get("worker_inference_started_at"),
-                                tm.get("worker_inference_completed_at")),
-            "tool_parse_ms": _ms(tm.get("worker_inference_completed_at"),
-                                 tm.get("worker_tool_parse_completed_at")),
+            "inference_ms": _ms(tm.get("worker_inference_started_at"), tm.get("worker_inference_completed_at")),
+            "tool_parse_ms": _ms(tm.get("worker_inference_completed_at"), tm.get("worker_tool_parse_completed_at")),
             "completion_chars": len(turn.get("completion_text") or ""),
         }
         name = f"turn {i}" + (f" · {tool}" if tool else "")
@@ -231,8 +239,7 @@ def build_rollout_samples(base: str, harbor_by_task: dict, max_sessions: int | N
     print(f"[info] fetching {len(sids)} sessions ...", file=sys.stderr)
     samples = []
     with cf.ThreadPoolExecutor(max_workers=8) as pool:
-        futs = {pool.submit(_session_sample, base, sid, harbor_by_task.get(sid, {})): sid
-                for sid in sids}
+        futs = {pool.submit(_session_sample, base, sid, harbor_by_task.get(sid, {})): sid for sid in sids}
         for fut in cf.as_completed(futs):
             s = fut.result()
             if s:
@@ -248,6 +255,7 @@ def _iso_epoch(value):
         return 0.0
     try:
         from datetime import datetime
+
         return datetime.fromisoformat(str(value).replace("Z", "+00:00")).timestamp()
     except (ValueError, TypeError):
         return 0.0
@@ -261,21 +269,23 @@ def _parse_trials(items):
         dur = t.get("duration") or 0
         if not dur and started and finished:
             dur = finished - started
-        result.append({
-            "trial_name": t.get("trial_name") or t.get("name") or t.get("run_id", ""),
-            "run_id": t.get("run_id") or t.get("name", ""),
-            "job_id": t.get("job_id", ""),
-            "status": t.get("status", ""),
-            "started_at": started,
-            "finished_at": finished,
-            "duration": dur,
-            "reward": t.get("reward"),
-            "agent_name": t.get("agent_name", ""),
-            "n_input_tokens": t.get("n_input_tokens") or t.get("input_tokens") or 0,
-            "n_output_tokens": t.get("n_output_tokens") or t.get("output_tokens") or 0,
-            "error_type": t.get("error_type"),
-            "task_id": t.get("task_id", ""),
-        })
+        result.append(
+            {
+                "trial_name": t.get("trial_name") or t.get("name") or t.get("run_id", ""),
+                "run_id": t.get("run_id") or t.get("name", ""),
+                "job_id": t.get("job_id", ""),
+                "status": t.get("status", ""),
+                "started_at": started,
+                "finished_at": finished,
+                "duration": dur,
+                "reward": t.get("reward"),
+                "agent_name": t.get("agent_name", ""),
+                "n_input_tokens": t.get("n_input_tokens") or t.get("input_tokens") or 0,
+                "n_output_tokens": t.get("n_output_tokens") or t.get("output_tokens") or 0,
+                "error_type": t.get("error_type"),
+                "task_id": t.get("task_id", ""),
+            }
+        )
     return result
 
 
@@ -313,9 +323,9 @@ def fetch_trial_metadata(base: str):
 
 def _parse_phases_from_log(log_text: str):
     """Parse 'Phase: ... starting/completed' lines from a trial server.log."""
+    import calendar as _cal
     import re as _re
     from datetime import datetime as _dt
-    import calendar as _cal
 
     phases = {}
     patterns = [
@@ -362,9 +372,11 @@ def fetch_trial_phases(base: str, trial):
 
 def attach_trial_phases(base: str, trials):
     """Populate trial['phases'] from each trial's server.log (threaded)."""
+
     def _one(tr):
         tr["phases"] = fetch_trial_phases(base, tr)
         return tr
+
     with cf.ThreadPoolExecutor(max_workers=8) as pool:
         list(pool.map(_one, trials))
     n = sum(1 for t in trials if t.get("phases"))
@@ -374,10 +386,13 @@ def attach_trial_phases(base: str, trials):
 def _extract_task_name(name: str) -> str:
     """'django__django-10880-VP7M...' / 'django-django-10914-19541d' -> 'django-10914'."""
     import re
+
     normalized = (name or "").replace("__", "-")
     m = re.match(
         r"((?:django|astropy|sympy|pytest|sphinx|requests|flask|scikit|matplotlib|numpy|pandas|rb|jsx)"
-        r"[-_][\w]+[-_]\d+)", normalized)
+        r"[-_][\w]+[-_]\d+)",
+        normalized,
+    )
     if m:
         return m.group(1)
     parts = normalized.split("-")
@@ -435,8 +450,11 @@ def match_trials_to_agents(agents, trials):
                 agents[ai]["trial"] = trial
                 matched.add(ai)
                 used.add(id(trial))
-    print(f"[info] linked {len(matched)}/{len(agents)} sessions to trials "
-          f"({exact} exact by task_id, {len(matched) - exact} fuzzy by overlap)", file=sys.stderr)
+    print(
+        f"[info] linked {len(matched)}/{len(agents)} sessions to trials "
+        f"({exact} exact by task_id, {len(matched) - exact} fuzzy by overlap)",
+        file=sys.stderr,
+    )
 
 
 # Trial server.log phase spans, in chronological order.
@@ -457,8 +475,7 @@ def _add_phase_spans(events, phases, prefix, parent, exec_span_id=None):
     if not phases:
         return
     for label, k0, k1 in _PHASE_SPANS:
-        span_id = (exec_span_id if (label == "agent exec" and exec_span_id)
-                   else f"{prefix}:{label.replace(' ', '_')}")
+        span_id = exec_span_id if (label == "agent exec" and exec_span_id) else f"{prefix}:{label.replace(' ', '_')}"
         _span(events, f"⚙ {label}", phases.get(k0), phases.get(k1), span_id, parent)
 
 
@@ -475,26 +492,36 @@ def build_trial_samples(trials):
         name = tr.get("trial_name") or tr.get("run_id") or tr.get("task_id")
         tid = f"trial:{name}"
         ev = []
-        _span(ev, name, start, end, tid, None, attrs={
-            "reward": tr.get("reward"),
-            "status": tr.get("status"),
-            "duration_s": tr.get("duration"),
-            "agent": tr.get("agent_name"),
-            "error_type": tr.get("error_type"),
-            "input_tokens": tr.get("n_input_tokens"),
-            "output_tokens": tr.get("n_output_tokens"),
-            "task_id": tr.get("task_id"),
-        })
+        _span(
+            ev,
+            name,
+            start,
+            end,
+            tid,
+            None,
+            attrs={
+                "reward": tr.get("reward"),
+                "status": tr.get("status"),
+                "duration_s": tr.get("duration"),
+                "agent": tr.get("agent_name"),
+                "error_type": tr.get("error_type"),
+                "input_tokens": tr.get("n_input_tokens"),
+                "output_tokens": tr.get("n_output_tokens"),
+                "task_id": tr.get("task_id"),
+            },
+        )
         _add_phase_spans(ev, tr.get("phases"), tid, tid)
-        samples.append({
-            "index": name,
-            "source": "trial",
-            "status": tr.get("status") or "completed",
-            "label": name,
-            "reward": tr.get("reward"),
-            "metadata": {},
-            "trace": {"events": ev, "trace_id": name, "attempt": 0},
-        })
+        samples.append(
+            {
+                "index": name,
+                "source": "trial",
+                "status": tr.get("status") or "completed",
+                "label": name,
+                "reward": tr.get("reward"),
+                "metadata": {},
+                "trace": {"events": ev, "trace_id": name, "attempt": 0},
+            }
+        )
     print(f"[info] trial rows: {len(samples)}", file=sys.stderr)
     return samples
 
@@ -508,8 +535,10 @@ def link_sessions_to_trials(rollout_samples, trials):
     they actually run. Matched trials are flagged so build_trial_samples()
     won't emit a duplicate standalone row.
     """
-    agents = [{"session_id": s["_sid"], "start": s.get("_start", 0),
-               "end": s.get("_end", 0), "sample": s} for s in rollout_samples]
+    agents = [
+        {"session_id": s["_sid"], "start": s.get("_start", 0), "end": s.get("_end", 0), "sample": s}
+        for s in rollout_samples
+    ]
     match_trials_to_agents(agents, trials)
     merged = 0
     for agent in agents:
@@ -547,8 +576,7 @@ def link_sessions_to_trials(rollout_samples, trials):
         exec_id = f"sess:{sid}:agent_exec" if has_exec else None
         if exec_id:
             for e in events:
-                if (e.get("parent_span_id") == f"sess:{sid}"
-                        and str(e.get("span_id", "")).startswith(f"{sid}:t")):
+                if e.get("parent_span_id") == f"sess:{sid}" and str(e.get("span_id", "")).startswith(f"{sid}:t"):
                     e["parent_span_id"] = exec_id
         _add_phase_spans(events, phases, f"sess:{sid}:phase", None, exec_span_id=exec_id)
         # Attach trial metadata to the agent-exec span (or env setup as fallback).
@@ -571,7 +599,8 @@ def patch_tooltip_template():
     )
     new = (
         "      const TOOL_KEYS = new Set(['tool', 'tool_args', 'tool_output']);\n"
-        "      const otherKeys = Object.keys(attrs).filter(k => !k.startsWith('pd_') && !k.startsWith('timeline_') && !TOOL_KEYS.has(k));\n"
+        "      const otherKeys = Object.keys(attrs).filter(\n"
+        "          (k => !k.startsWith('pd_') && !k.startsWith('timeline_') && !TOOL_KEYS.has(k)));\n"
         "      if (attrs.tool || attrs.tool_args || attrs.tool_output) {\n"
         "        lines.push('──── tool call ────');\n"
         "        if (attrs.tool) lines.push(`\\u{1f527} tool: ${attrs.tool}`);\n"
@@ -645,7 +674,9 @@ updateStats = function () {
   );
   document.getElementById('stats').innerHTML = items.map(it =>
     `<div class="stat"><div class="name">${
-      it.code ? `<span class="swatch" style="background:${hashColor(it.name, 0.9)}"></span>${escapeHtml(it.name)}` : escapeHtml(it.name)
+      it.code
+        ? `<span class="swatch" style="background:${hashColor(it.name, 0.9)}"></span>${escapeHtml(it.name)}`
+        : escapeHtml(it.name)
     }</div><div class="value">${it.value}</div></div>`).join('');
 };
 </script>
@@ -710,8 +741,7 @@ def main():
     )
     # Never clobber a good cache with an empty one (e.g. upstream servers down).
     if cache["sample_count"] == 0 and paths.cache_path.exists():
-        print("[error] fetched 0 rows (servers down?); keeping existing cache, "
-              "regenerating HTML only", file=sys.stderr)
+        print("[error] fetched 0 rows (servers down?); keeping existing cache, regenerating HTML only", file=sys.stderr)
         patch_tooltip_template()
         ttv.ensure_html(paths)
         if not args.no_serve:

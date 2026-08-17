@@ -97,9 +97,7 @@ def optional_span(
         return
 
     span_kind = kind if kind is not None else SpanKind.INTERNAL
-    with _tracer.start_as_current_span(
-        name, kind=span_kind, attributes=attributes or {}
-    ) as span:
+    with _tracer.start_as_current_span(name, kind=span_kind, attributes=attributes or {}) as span:
         yield span
 
 

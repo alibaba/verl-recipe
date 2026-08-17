@@ -19,6 +19,7 @@ Env:
 
 Run from the Ray head pod:  python3 validate_weight_sync_pd.py
 """
+
 import asyncio
 import glob
 import os
@@ -100,8 +101,13 @@ def _build_receivers():
             resources={RESOURCE: 1},
             runtime_env={"env_vars": {"PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True"}},
         ).remote(
-            sglang_url=f"http://127.0.0.1:{w['port']}", model_path=MODEL, bucket_size=BUCKET,
-            tp_rank=0, tp_size=1, recv_device=RECV_DEVICE, gpu_offset=w["offset"],
+            sglang_url=f"http://127.0.0.1:{w['port']}",
+            model_path=MODEL,
+            bucket_size=BUCKET,
+            tp_rank=0,
+            tp_size=1,
+            recv_device=RECV_DEVICE,
+            gpu_offset=w["offset"],
         )
         addr, mport = ray.get(r.get_rendezvous.remote())
         ray.get(r.setup_tp_group.remote(addr, mport))
@@ -148,13 +154,17 @@ def main():
     print("building receivers (one per PD worker)...", flush=True)
     receivers = _build_receivers()
 
-    print("baseline (via PD routers):", flush=True); show("base")
+    print("baseline (via PD routers):", flush=True)
+    show("base")
     print(">>> round 1: sync base (unchanged)", flush=True)
-    print("   sent/pushed:", sync_once(trainer, receivers, ""), flush=True); show("r1")
+    print("   sent/pushed:", sync_once(trainer, receivers, ""), flush=True)
+    show("r1")
     print(f">>> round 2: zero {ZERO_NAME} (expect collapse on ALL engines)", flush=True)
-    print("   sent/pushed:", sync_once(trainer, receivers, ZERO_NAME), flush=True); show("r2")
+    print("   sent/pushed:", sync_once(trainer, receivers, ZERO_NAME), flush=True)
+    show("r2")
     print(">>> round 3: restore base (expect recovery on ALL engines)", flush=True)
-    print("   sent/pushed:", sync_once(trainer, receivers, ""), flush=True); show("r3")
+    print("   sent/pushed:", sync_once(trainer, receivers, ""), flush=True)
+    show("r3")
     print("DONE", flush=True)
 
 

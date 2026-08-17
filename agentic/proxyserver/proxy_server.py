@@ -26,8 +26,10 @@ from .server import LLMProxyServer
 try:
     from .tracing import init_tracing
 except ImportError:
+
     def init_tracing(service_name=""):
         return False
+
 
 logger = logging.getLogger(__name__)
 
@@ -77,7 +79,10 @@ def run_standalone_proxy(
             "Standalone proxy started at %s (relay mode)\n"
             "  Workers connect to: ws://%s:%d/ws/worker\n"
             "  Health check:       %s/health",
-            url, host, port, url,
+            url,
+            host,
+            port,
+            url,
         )
         try:
             while True:
@@ -101,31 +106,40 @@ def main() -> None:
         description="Run the LLM Proxy as a standalone relay service.",
     )
     parser.add_argument(
-        "--host", default="0.0.0.0",
+        "--host",
+        default="0.0.0.0",
         help="Bind address (default: 0.0.0.0)",
     )
     parser.add_argument(
-        "--port", type=int, default=8080,
+        "--port",
+        type=int,
+        default=8080,
         help="Port number (default: 8080)",
     )
     parser.add_argument(
-        "--relay-timeout", type=float, default=300.0,
+        "--relay-timeout",
+        type=float,
+        default=300.0,
         help="Timeout (seconds) for relay requests (default: 300)",
     )
     parser.add_argument(
-        "--log-level", default="INFO",
+        "--log-level",
+        default="INFO",
         help="Logging level (default: INFO)",
     )
     parser.add_argument(
-        "--debug", action="store_true",
+        "--debug",
+        action="store_true",
         help="Enable debug endpoints (e.g. GET /sessions to list all sessions)",
     )
     parser.add_argument(
-        "--dump-dir", default=None,
+        "--dump-dir",
+        default=None,
         help="Directory to dump session JSON before deletion (default: disabled)",
     )
     parser.add_argument(
-        "--persist-dir", default="/tmp/llm-proxy-sessions",
+        "--persist-dir",
+        default="/tmp/llm-proxy-sessions",
         help="Directory for incremental session JSONL persistence (default: /tmp/llm-proxy-sessions)",
     )
     args = parser.parse_args()

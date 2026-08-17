@@ -12,6 +12,7 @@ Verifies base -> embed-zeroed -> restored via generation collapse/restore.
 
 Run from the Ray head pod:  python3 validate_checkpoint_manager.py
 """
+
 import asyncio
 import glob
 import os
@@ -122,11 +123,17 @@ def main():
     mgr = ExternalCheckpointManager(config=cfg, trainer=trainer, replicas=[])
 
     print("baseline    :", repr(generate()), flush=True)
-    print(">>> update_weights #1 (base)"); ray.get(ce.set_zero_name.remote("")); mgr.update_weights(global_steps=1)
+    print(">>> update_weights #1 (base)", flush=True)
+    ray.get(ce.set_zero_name.remote(""))
+    mgr.update_weights(global_steps=1)
     print("after #1    :", repr(generate()), flush=True)
-    print(">>> update_weights #2 (embed zeroed)"); ray.get(ce.set_zero_name.remote("model.embed_tokens.weight")); mgr.update_weights(global_steps=2)
+    print(">>> update_weights #2 (embed zeroed)", flush=True)
+    ray.get(ce.set_zero_name.remote("model.embed_tokens.weight"))
+    mgr.update_weights(global_steps=2)
     print("after #2    :", repr(generate()), flush=True)
-    print(">>> update_weights #3 (restore)"); ray.get(ce.set_zero_name.remote("")); mgr.update_weights(global_steps=3)
+    print(">>> update_weights #3 (restore)", flush=True)
+    ray.get(ce.set_zero_name.remote(""))
+    mgr.update_weights(global_steps=3)
     print("after #3    :", repr(generate()), flush=True)
 
 

@@ -115,6 +115,7 @@ def _dtype_to_str(dtype) -> str:
         getattr(torch, "float8_e4m3fn", None): "float8_e4m3fn",
     }.get(dtype, str(dtype).replace("torch.", ""))
 
+
 # Collective command opcodes broadcast from rank 0 to followers.
 CMD_COMPUTE_LOG_PROB = "compute_log_prob"
 CMD_UPDATE_ACTOR = "update_actor"
@@ -145,6 +146,28 @@ class MegatronRLServer:
         from verl.workers.utils.losses import ppo_loss
 
         arr = self.config.actor_rollout_ref
+
+        # The V1 driver injects trainer.total_training_steps into
+        # actor.optim.total_training_steps before building workers
+        # (trainer_base._init_dataloader). A standalone server must do the
+        # same, else mcore's OptimizerParamScheduler asserts
+        # ``lr_decay_steps > 0`` on the -1 default.
+        optim = arr.actor.optim
+        try:
+            tts = int(optim.get("total_training_steps", -1))
+        except (TypeError, ValueError):
+            tts = -1
+        if tts <= 0:
+            trainer_tts = (
+                self.config.get("trainer", {}).get("total_training_steps", None)
+                if hasattr(self.config, "get")
+                else None
+            )
+            optim.total_training_steps = max(1, int(trainer_tts) if trainer_tts else 4)
+            logger.info(
+                "injected actor.optim.total_training_steps=%d (driver normally does this)",
+                optim.total_training_steps,
+            )
 
         # 1. model + actor config (megatron strategy lives under actor.engine)
         model_config = omega_conf_to_dataclass(arr.model)
@@ -192,10 +215,23 @@ class MegatronRLServer:
         if "temperature" not in td.keys():
             temp = float(self.config.actor_rollout_ref.rollout.get("temperature", 1.0))
             tu.assign_non_tensor(td, temperature=temp)
-        # global_token_num drives the MFU calc; verl's driver sets it. Derive it
-        # from the attention mask when absent so a directly-posted batch works.
+        # The megatron engine's forward reads ``loss_mask`` (driver-side batches
+        # carry it); when a hand-rolled batch only has ``response_mask``, derive
+        # it so direct posts keep working.
+        if "loss_mask" not in td.keys() and "response_mask" in td.keys():
+            td["loss_mask"] = td["response_mask"].to(td["input_ids"].dtype)
+        # global_token_num drives the MFU calc; verl's driver sets it as a
+        # per-sequence list. Derive it from the input ids when absent so a
+        # directly-posted batch works (an int here crashes
+        # FlopsCounter.estimate_flops: `sum(int)`).
         if "global_token_num" not in td.keys():
-            gtn = int(td["attention_mask"].sum().item()) if "attention_mask" in td.keys() else 0
+            ids = td["input_ids"]
+            if getattr(ids, "is_nested", False):
+                gtn = ids.offsets().diff().tolist()
+            elif "attention_mask" in td.keys():
+                gtn = td["attention_mask"].sum(dim=-1).tolist()
+            else:
+                gtn = [int(ids.shape[-1])] * int(ids.shape[0])
             tu.assign_non_tensor(td, global_token_num=gtn)
         return td
 
@@ -242,11 +278,19 @@ class MegatronRLServer:
                 pass
 
         def _join(ep):
-            _post(ep, "init_weights_update_group", {
-                "master_address": master_addr, "master_port": master_port,
-                "rank_offset": rank_offset[ep], "world_size": world_size,
-                "group_name": group_name, "backend": "nccl",
-            }, timeout=600.0)
+            _post(
+                ep,
+                "init_weights_update_group",
+                {
+                    "master_address": master_addr,
+                    "master_port": master_port,
+                    "rank_offset": rank_offset[ep],
+                    "world_size": world_size,
+                    "group_name": group_name,
+                    "backend": "nccl",
+                },
+                timeout=600.0,
+            )
 
         threads = [threading.Thread(target=_join, args=(ep,), daemon=True) for ep in sglang_endpoints]
         for t in threads:
@@ -259,15 +303,25 @@ class MegatronRLServer:
 
         torch.cuda.set_device(torch.cuda.current_device())
         self._weight_group = init_custom_process_group(
-            backend="nccl", init_method=f"tcp://{master_addr}:{master_port}",
-            world_size=world_size, rank=0, group_name=group_name,
+            backend="nccl",
+            init_method=f"tcp://{master_addr}:{master_port}",
+            world_size=world_size,
+            rank=0,
+            group_name=group_name,
         )
         for t in threads:
             t.join()
         logger.info("weight-sync NCCL group formed: world_size=%d master=%s:%d", world_size, master_addr, master_port)
 
-    def _push_weights(self, transport: str, step: int, sglang_endpoints=None, group_name="verl_ms_weight_sync",
-                      chunk_tensors: int = 32, **kwargs) -> dict:
+    def _push_weights(
+        self,
+        transport: str,
+        step: int,
+        sglang_endpoints=None,
+        group_name="verl_ms_weight_sync",
+        chunk_tensors: int = 32,
+        **kwargs,
+    ) -> dict:
         per_tensor_param, _extra = self.actor.engine.get_per_tensor_param()
         if transport != "nccl":
             raise ValueError(f"train_server only serves transport='nccl' here; got {transport!r}")
@@ -279,7 +333,6 @@ class MegatronRLServer:
                 pass
             return {"pushed": True, "rank": self.rank}
 
-        import torch
         import torch.distributed as dist
 
         sglang_endpoints = [e.rstrip("/") for e in (sglang_endpoints or [])]
@@ -298,10 +351,20 @@ class MegatronRLServer:
             # SGLang blocks on the NCCL recv inside these HTTP calls → run in
             # threads while rank 0 broadcasts the same tensors in order.
             http = [
-                threading.Thread(target=_post, args=(ep, "update_weights_from_distributed", {
-                    "names": names, "dtypes": dtypes, "shapes": shapes,
-                    "group_name": group_name, "flush_cache": False,
-                }))
+                threading.Thread(
+                    target=_post,
+                    args=(
+                        ep,
+                        "update_weights_from_distributed",
+                        {
+                            "names": names,
+                            "dtypes": dtypes,
+                            "shapes": shapes,
+                            "group_name": group_name,
+                            "flush_cache": False,
+                        },
+                    ),
+                )
                 for ep in sglang_endpoints
             ]
             for t in http:
@@ -346,8 +409,13 @@ class MegatronRLServer:
             # Copy config/tokenizer from the base model dir (idempotent).
             base = self.config.actor_rollout_ref.model.path
             for f in (
-                "config.json", "generation_config.json", "tokenizer.json",
-                "tokenizer_config.json", "vocab.json", "merges.txt", "special_tokens_map.json",
+                "config.json",
+                "generation_config.json",
+                "tokenizer.json",
+                "tokenizer_config.json",
+                "vocab.json",
+                "merges.txt",
+                "special_tokens_map.json",
             ):
                 src = os.path.join(base, f)
                 dst = os.path.join(path, f)
@@ -422,7 +490,6 @@ class MegatronRLServer:
             return
 
         from aiohttp import web
-
         from recipe.remote_megatron_sglang.server import protocol as P
 
         async def _compute(request, cmd):

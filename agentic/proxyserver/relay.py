@@ -47,7 +47,6 @@ All messages are JSON objects with a ``type`` field.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import time
 from typing import Any
@@ -66,6 +65,7 @@ except ImportError:
 
     def inject_context(carrier):
         pass
+
 
 logger = logging.getLogger(__name__)
 
@@ -124,9 +124,7 @@ class InferenceRelay:
         """Register a newly connected worker."""
         self._workers[worker_id] = ws
         self._worker_available.set()
-        logger.info(
-            "Worker %s connected (total: %d)", worker_id, len(self._workers)
-        )
+        logger.info("Worker %s connected (total: %d)", worker_id, len(self._workers))
 
     def unregister_worker(self, worker_id: str) -> None:
         """Remove a disconnected worker and fail its pending requests."""
@@ -135,22 +133,16 @@ class InferenceRelay:
             self._worker_available.clear()
 
         # Fail any pending requests assigned to this worker
-        failed_ids = [
-            rid for rid, pr in self._pending.items()
-            if pr.worker_id == worker_id
-        ]
+        failed_ids = [rid for rid, pr in self._pending.items() if pr.worker_id == worker_id]
         for rid in failed_ids:
             pr = self._pending.pop(rid)
             if not pr.future.done():
-                pr.future.set_exception(
-                    RuntimeError(
-                        f"Worker {worker_id} disconnected while processing "
-                        f"request {rid}"
-                    )
-                )
+                pr.future.set_exception(RuntimeError(f"Worker {worker_id} disconnected while processing request {rid}"))
         logger.info(
             "Worker %s disconnected (total: %d, failed requests: %d)",
-            worker_id, len(self._workers), len(failed_ids),
+            worker_id,
+            len(self._workers),
+            len(failed_ids),
         )
 
     # ------------------------------------------------------------------
@@ -203,7 +195,7 @@ class InferenceRelay:
                     "No inference workers connected to the proxy. "
                     "Ensure a framework-side worker is running and "
                     "connected via WebSocket."
-                )
+                ) from None
 
         worker_id, ws = self._pick_worker()
         request_id = uuid4().hex
@@ -234,22 +226,17 @@ class InferenceRelay:
                 await ws.send_json(request_msg)
             except Exception as e:
                 self._pending.pop(request_id, None)
-                raise RuntimeError(
-                    f"Failed to send request to worker {worker_id}: {e}"
-                )
+                raise RuntimeError(f"Failed to send request to worker {worker_id}: {e}") from e
 
             dispatched_at = time.time()
 
             try:
-                result = await asyncio.wait_for(
-                    pending.future, timeout=self.request_timeout
-                )
+                result = await asyncio.wait_for(pending.future, timeout=self.request_timeout)
             except asyncio.TimeoutError:
                 self._pending.pop(request_id, None)
                 raise RuntimeError(
-                    f"Inference request {request_id} timed out after "
-                    f"{self.request_timeout}s (worker: {worker_id})"
-                )
+                    f"Inference request {request_id} timed out after {self.request_timeout}s (worker: {worker_id})"
+                ) from None
 
             relay_round_trip_ms = (time.monotonic() - pending.created_at) * 1000
             timing = result.get("timing")
@@ -277,9 +264,7 @@ class InferenceRelay:
         """
         pending = self._pending.pop(request_id, None)
         if pending is None:
-            logger.warning(
-                "Received response for unknown/expired request %s", request_id
-            )
+            logger.warning("Received response for unknown/expired request %s", request_id)
             return False
 
         if not pending.future.done():
@@ -318,11 +303,13 @@ class InferenceRelay:
         self.register_worker(worker_id, ws)
 
         # Send acknowledgment
-        await ws.send_json({
-            "type": "worker_hello_ack",
-            "worker_id": worker_id,
-            "status": "connected",
-        })
+        await ws.send_json(
+            {
+                "type": "worker_hello_ack",
+                "worker_id": worker_id,
+                "status": "connected",
+            }
+        )
 
         try:
             while True:

@@ -9,6 +9,7 @@ SGLang server via CUDA IPC (`/update_weights_from_tensor`).
 This mirrors verl's colocated CheckpointEngineWorker -> ServerAdapter path, but
 against an SGLang instance that verl did NOT launch.
 """
+
 import argparse
 import asyncio
 import os
@@ -28,11 +29,11 @@ os.environ.setdefault("RANK", "1")
 os.environ.setdefault("CUDA_VISIBLE_DEVICES", str(args.gpu))
 
 import torch  # noqa: E402
+from sglang.srt.weight_sync.utils import update_weights as sgl_update_weights  # noqa: E402
 from torch.distributed.device_mesh import init_device_mesh  # noqa: E402
 
 from verl.checkpoint_engine.mooncake_checkpoint_engine import MooncakeCheckpointEngine  # noqa: E402
 from verl.workers.rollout.sglang_rollout.http_server_engine import AsyncHttpServerAdapter  # noqa: E402
-from sglang.srt.weight_sync.utils import update_weights as sgl_update_weights  # noqa: E402
 
 
 async def main():
@@ -41,9 +42,7 @@ async def main():
     # A trivial (world_size=1) torch.distributed group so init_device_mesh works;
     # sgl_update_weights uses the mesh to gather IPC handles across TP ranks (TP=1 here).
     if not torch.distributed.is_initialized():
-        torch.distributed.init_process_group(
-            backend="nccl", init_method="tcp://127.0.0.1:29666", rank=0, world_size=1
-        )
+        torch.distributed.init_process_group(backend="nccl", init_method="tcp://127.0.0.1:29666", rank=0, world_size=1)
     device_mesh = init_device_mesh("cuda", (1,), mesh_dim_names=("infer_tp",))
 
     engine = MooncakeCheckpointEngine(bucket_size=bucket_size, device="cuda", is_master=False)

@@ -27,6 +27,7 @@ instances.
 
 Run from the Ray head pod:  python3 validate_weight_sync_2x_tp4.py
 """
+
 import asyncio
 import glob
 import os
@@ -107,16 +108,24 @@ def _build_receivers():
                 resources={inst["resource"]: 1},
                 runtime_env={"env_vars": {"PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True"}},
             ).remote(
-                sglang_url=f"http://127.0.0.1:{inst['port']}", model_path=MODEL, bucket_size=BUCKET,
-                tp_rank=r, tp_size=TP, recv_device=RECV_DEVICE, gpu_offset=inst["offset"],
+                sglang_url=f"http://127.0.0.1:{inst['port']}",
+                model_path=MODEL,
+                bucket_size=BUCKET,
+                tp_rank=r,
+                tp_size=TP,
+                recv_device=RECV_DEVICE,
+                gpu_offset=inst["offset"],
             )
             for r in range(TP)
         ]
         addr, mport = ray.get(recv[0].get_rendezvous.remote())
         ray.get([r.setup_tp_group.remote(addr, mport) for r in recv])
         receivers.extend(recv)
-        print(f"  instance {i}: resource={inst['resource']} {inst['host']}:{inst['port']} "
-              f"tp={TP} gpu_offset={inst['offset']} -> {TP} receivers", flush=True)
+        print(
+            f"  instance {i}: resource={inst['resource']} {inst['host']}:{inst['port']} "
+            f"tp={TP} gpu_offset={inst['offset']} -> {TP} receivers",
+            flush=True,
+        )
     return receivers
 
 
@@ -158,13 +167,17 @@ def main():
     print("building receivers...", flush=True)
     receivers = _build_receivers()
 
-    print("baseline:", flush=True); show("base")
+    print("baseline:", flush=True)
+    show("base")
     print(">>> round 1: sync base (unchanged)", flush=True)
-    print("   sent/pushed:", sync_once(trainer, receivers, ""), flush=True); show("r1")
+    print("   sent/pushed:", sync_once(trainer, receivers, ""), flush=True)
+    show("r1")
     print(f">>> round 2: zero {ZERO_NAME} (expect collapse on ALL)", flush=True)
-    print("   sent/pushed:", sync_once(trainer, receivers, ZERO_NAME), flush=True); show("r2")
+    print("   sent/pushed:", sync_once(trainer, receivers, ZERO_NAME), flush=True)
+    show("r2")
     print(">>> round 3: restore base (expect recovery on ALL)", flush=True)
-    print("   sent/pushed:", sync_once(trainer, receivers, ""), flush=True); show("r3")
+    print("   sent/pushed:", sync_once(trainer, receivers, ""), flush=True)
+    show("r3")
     print("DONE", flush=True)
 
 
