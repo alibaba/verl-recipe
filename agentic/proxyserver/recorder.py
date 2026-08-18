@@ -64,7 +64,7 @@ class SessionRecorder:
             fpath = os.path.join(self._persist_dir, fname)
             try:
                 session = SessionRecord(session_id=session_id)
-                with open(fpath, "r", encoding="utf-8") as f:
+                with open(fpath, encoding="utf-8") as f:
                     for line in f:
                         line = line.strip()
                         if not line:
@@ -108,10 +108,13 @@ class SessionRecorder:
                 raise SessionAlreadyExistsError(session_id)
             session = SessionRecord(session_id=session_id)
             self._sessions[session_id] = session
-        self._append_to_disk(session_id, {
-            "type": "session_create",
-            "created_at": session.created_at,
-        })
+        self._append_to_disk(
+            session_id,
+            {
+                "type": "session_create",
+                "created_at": session.created_at,
+            },
+        )
 
     def reset_session(self, session_id: str) -> bool:
         """Reset an active session by clearing all recorded turns.
@@ -158,9 +161,7 @@ class SessionRecorder:
                 raise SessionClosedError(session_id)
             session = self._sessions.get(session_id)
             if session is None:
-                logger.warning(
-                    "Session %s not found, auto-creating for recording", session_id
-                )
+                logger.warning("Session %s not found, auto-creating for recording", session_id)
                 session = SessionRecord(session_id=session_id)
                 self._sessions[session_id] = session
 
@@ -173,9 +174,7 @@ class SessionRecorder:
             # message count at the most recent turn, which is used to
             # compute the slice point for the next delta.
             if session.turns:
-                prev_full_count = sum(
-                    len(t.request_messages) for t in session.turns
-                )
+                prev_full_count = sum(len(t.request_messages) for t in session.turns)
                 if len(messages) > prev_full_count:
                     stored_messages = messages[prev_full_count:]
                 elif len(messages) == prev_full_count:
@@ -185,9 +184,10 @@ class SessionRecorder:
                     # Agent modified or shortened the history — store full
                     # messages as a fallback to avoid data loss.
                     logger.debug(
-                        "Session %s: message count decreased from %d to %d, "
-                        "storing full messages",
-                        session_id, prev_full_count, len(messages),
+                        "Session %s: message count decreased from %d to %d, storing full messages",
+                        session_id,
+                        prev_full_count,
+                        len(messages),
                     )
                     stored_messages = messages
             else:
@@ -208,10 +208,13 @@ class SessionRecorder:
                 rank_info=rank_info,
             )
             session.turns.append(record)
-        self._append_to_disk(session_id, {
-            "type": "turn",
-            "data": record.model_dump(),
-        })
+        self._append_to_disk(
+            session_id,
+            {
+                "type": "turn",
+                "data": record.model_dump(),
+            },
+        )
 
     def get_session(self, session_id: str) -> SessionRecord | None:
         """Retrieve session data. Returns None if not found."""
@@ -337,24 +340,22 @@ class SessionRecorder:
         for session_id, fname in session_files.items():
             fpath = os.path.join(dump_dir, fname)
             try:
-                with open(fpath, "r", encoding="utf-8") as f:
+                with open(fpath, encoding="utf-8") as f:
                     data = json.load(f)
                 turns = len(data.get("turns", []))
                 completed = data.get("completed", True)
-                results.append({
-                    "session_id": session_id,
-                    "turns": turns,
-                    "completed": completed,
-                })
-            except Exception as e:
-                logger.warning(
-                    "Failed to read completed session file %s: %s", fpath, e
+                results.append(
+                    {
+                        "session_id": session_id,
+                        "turns": turns,
+                        "completed": completed,
+                    }
                 )
+            except Exception as e:
+                logger.warning("Failed to read completed session file %s: %s", fpath, e)
         return results
 
-    def load_completed_session(
-        self, session_id: str, dump_dir: str
-    ) -> SessionRecord | None:
+    def load_completed_session(self, session_id: str, dump_dir: str) -> SessionRecord | None:
         """Load a completed session's full record from dump_dir.
 
         Searches ``dump_dir`` for JSON files named
@@ -401,13 +402,15 @@ class SessionRecorder:
         fpath = os.path.join(dump_dir, latest_fname)
 
         try:
-            with open(fpath, "r", encoding="utf-8") as f:
+            with open(fpath, encoding="utf-8") as f:
                 data = json.load(f)
             return SessionRecord.model_validate(data)
         except Exception as e:
             logger.warning(
                 "Failed to load completed session %s from %s: %s",
-                session_id, fpath, e,
+                session_id,
+                fpath,
+                e,
             )
             return None
 

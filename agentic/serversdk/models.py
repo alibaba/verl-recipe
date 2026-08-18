@@ -39,8 +39,7 @@ class AgentRunRequest(BaseModel):
         "All trials sharing the same job_id are aggregated under one job."
     )
     task_id: str = Field(
-        description="Unique identifier for this task, used for tracing and "
-        "joining data with the LLM proxy."
+        description="Unique identifier for this task, used for tracing and joining data with the LLM proxy."
     )
     task_path: str = Field(description="Path to the task directory")
     agent: AgentConfig = Field(description="Agent configuration")
@@ -75,30 +74,43 @@ class AgentRunRequest(BaseModel):
 
     @field_validator("environment_kwargs")
     @classmethod
-    def validate_environment_kwargs(
-        cls, v: dict[str, Any] | None
-    ) -> dict[str, Any] | None:
+    def validate_environment_kwargs(cls, v: dict[str, Any] | None) -> dict[str, Any] | None:
         if v is None:
             return v
         allowed_keys = {
-            "namespace", "context", "kubeconfig", "image_pull_secret",
-            "service_account", "node_selector", "tolerations",
-            "memory_limit_multiplier", "registry",
-            "use_sandbox_claim", "claim_timeout",
-            "sandbox_env_vars", "sandbox_labels", "sandbox_annotations",
+            "namespace",
+            "context",
+            "kubeconfig",
+            "image_pull_secret",
+            "service_account",
+            "node_selector",
+            "tolerations",
+            "memory_limit_multiplier",
+            "registry",
+            "use_sandbox_claim",
+            "claim_timeout",
+            "sandbox_env_vars",
+            "sandbox_labels",
+            "sandbox_annotations",
             "use_async_exec",
             "pod_overrides",
             # Legacy (deprecated — use pod_overrides instead)
-            "pod_privileged", "pod_run_as_user", "pod_run_as_group",
-            "pod_capabilities_add", "pod_capabilities_drop",
-            "pod_annotations", "pod_labels", "extra_env",
-            "extra_volumes", "extra_volume_mounts", "init_containers",
+            "pod_privileged",
+            "pod_run_as_user",
+            "pod_run_as_group",
+            "pod_capabilities_add",
+            "pod_capabilities_drop",
+            "pod_annotations",
+            "pod_labels",
+            "extra_env",
+            "extra_volumes",
+            "extra_volume_mounts",
+            "init_containers",
         }
         unknown = set(v.keys()) - allowed_keys
         if unknown:
             raise ValueError(
-                f"Unknown environment_kwargs keys: {sorted(unknown)}. "
-                f"Allowed keys are: {sorted(allowed_keys)}"
+                f"Unknown environment_kwargs keys: {sorted(unknown)}. Allowed keys are: {sorted(allowed_keys)}"
             )
         return v
 
@@ -133,9 +145,7 @@ class AgentRunResponse(BaseModel):
         description="Agent metadata (may contain token_ids/mask_ids for legacy RL integrations)",
     )
     error: str | None = None
-    result_uri: str | None = Field(
-        default=None, description="URI of the full TrialResult in storage"
-    )
+    result_uri: str | None = Field(default=None, description="URI of the full TrialResult in storage")
     retry_count: int = Field(
         default=0,
         description="Number of retries performed before reaching this result.",
@@ -163,7 +173,7 @@ class PaginatedResponse(BaseModel, Generic[T]):
         total: int,
         page: int,
         page_size: int,
-    ) -> "PaginatedResponse[T]":
+    ) -> PaginatedResponse[T]:
         return cls(
             items=items,
             total=total,

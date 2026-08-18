@@ -53,7 +53,7 @@ class NcclHttpTransport(WeightSyncTransport):
         self.chunk_tensors = int(cfg.get("chunk_tensors", 32))
 
     @classmethod
-    def from_config(cls, cfg, train_client, infer_client) -> "NcclHttpTransport":
+    def from_config(cls, cfg, train_client, infer_client) -> NcclHttpTransport:
         return cls(cfg, train_client, infer_client)
 
     async def setup(self) -> None:

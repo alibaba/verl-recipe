@@ -23,14 +23,12 @@ Usage from ``RemoteAgentLoop`` (any worker node)::
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
-import os
 from typing import Any
 
 from .recorder import SessionClosedError
-from .server import LLMProxyServer, build_openai_response
+from .server import LLMProxyServer
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -86,15 +84,12 @@ def _create_local_proxy(
         else:
             try:
                 from verl.experimental.agent_loop.tool_parser import ToolParser
+
                 tool_parser = ToolParser.get_tool_parser(tool_format, tokenizer)
             except ImportError as e:
-                logger.warning(
-                    "verl.experimental.agent_loop.tool_parser not available; "
-                    "tool parsing disabled: %s", e
-                )
+                logger.warning("verl.experimental.agent_loop.tool_parser not available; tool parsing disabled: %s", e)
         if tool_parser is not None:
-            logger.info("[PROXY_INIT] Tool parser initialized: %s (type=%s)",
-                        tool_format, type(tool_parser).__name__)
+            logger.info("[PROXY_INIT] Tool parser initialized: %s (type=%s)", tool_format, type(tool_parser).__name__)
         else:
             logger.warning("[PROXY_INIT] Tool parser is None despite tool_format=%s", tool_format)
 
@@ -103,9 +98,7 @@ def _create_local_proxy(
         tokenizer=tokenizer,
         tool_parser=tool_parser,
     )
-    litellm.custom_provider_map = [
-        {"provider": "verl-vllm", "custom_handler": provider}
-    ]
+    litellm.custom_provider_map = [{"provider": "verl-vllm", "custom_handler": provider}]
 
     # Build the handler closure that captures litellm + provider
     handler = _make_litellm_handler()
@@ -155,9 +148,9 @@ def _make_litellm_handler():
             completion_kwargs["repetition_penalty"] = body["repetition_penalty"]
 
         logger.info(
-            "[LOCAL_HANDLER] acompletion called: trial=%s, model=%s, tools=%s (count=%d), "
-            "messages_count=%d",
-            trial_id, completion_kwargs["model"],
+            "[LOCAL_HANDLER] acompletion called: trial=%s, model=%s, tools=%s (count=%d), messages_count=%d",
+            trial_id,
+            completion_kwargs["model"],
             "present" if "tools" in completion_kwargs else "absent",
             len(completion_kwargs.get("tools", [])),
             len(messages),
@@ -166,16 +159,14 @@ def _make_litellm_handler():
         try:
             response = await litellm.acompletion(**completion_kwargs)
             logger.info(
-                "[LOCAL_HANDLER] litellm.acompletion returned: choices=%d, "
-                "model=%s",
+                "[LOCAL_HANDLER] litellm.acompletion returned: choices=%d, model=%s",
                 len(response.choices),
                 response.model,
             )
             for i, choice in enumerate(response.choices):
                 msg = choice.message
                 logger.info(
-                    "[LOCAL_HANDLER] Choice[%d]: finish_reason=%s, has_tool_calls=%s, "
-                    "content_len=%d",
+                    "[LOCAL_HANDLER] Choice[%d]: finish_reason=%s, has_tool_calls=%s, content_len=%d",
                     i,
                     getattr(choice, "finish_reason", None),
                     hasattr(msg, "tool_calls") and msg.tool_calls is not None,
@@ -183,8 +174,7 @@ def _make_litellm_handler():
                 )
                 if hasattr(msg, "tool_calls") and msg.tool_calls:
                     for j, tc in enumerate(msg.tool_calls):
-                        logger.info("[LOCAL_HANDLER] Choice[%d].tool_call[%d]: %s",
-                                    i, j, tc)
+                        logger.info("[LOCAL_HANDLER] Choice[%d].tool_call[%d]: %s", i, j, tc)
         except Exception as e:
             logger.error("[LOCAL_HANDLER] Generate failed for trial %s: %s", trial_id, e)
             return JSONResponse(status_code=500, content={"error": str(e)})
@@ -232,10 +222,7 @@ def _record_from_response(
     tool_calls = None
     msg = choice.message
     if hasattr(msg, "tool_calls") and msg.tool_calls:
-        tool_calls = [
-            tc.model_dump() if hasattr(tc, "model_dump") else tc
-            for tc in msg.tool_calls
-        ]
+        tool_calls = [tc.model_dump() if hasattr(tc, "model_dump") else tc for tc in msg.tool_calls]
 
     content = ""
     if hasattr(msg, "content") and msg.content:
@@ -328,6 +315,7 @@ async def _stream_and_record(
 def _get_ray():
     """Lazy import of ray."""
     import ray
+
     return ray
 
 

@@ -26,8 +26,8 @@ Usage:
     torchrun --nproc_per_node=2 verify_transfer_sync_write_side_effect.py
 """
 
-import os
 import sys
+
 import torch
 import torch.distributed as dist
 
@@ -59,6 +59,7 @@ def main():
 
     # ─── Init Mooncake TransferEngine ───────────────────────────────────────
     import ray
+
     engine = TransferEngine()
     hostname = ray.util.get_node_ip_address().strip("[]")
     ret = engine.initialize(hostname, "P2PHANDSHAKE", "rdma", "")
@@ -105,8 +106,8 @@ def main():
         if rank == 1:
             ret = engine.transfer_sync_write(
                 peer_session,
-                magic_buf.data_ptr(),   # local source: magic bytes
-                peer_data_ptr,           # remote destination: rank 0's data_buf
+                magic_buf.data_ptr(),  # local source: magic bytes
+                peer_data_ptr,  # remote destination: rank 0's data_buf
                 4,
             )
             assert ret == 0, f"transfer_sync_write failed ret={ret}"
@@ -120,37 +121,37 @@ def main():
         is_magic = after[:4] == MAGIC
 
         if rank == 0:
-            print(f"\n{'='*60}")
+            print(f"\n{'=' * 60}")
             print(f"Rank 0 (remote target) — GPU: {device}")
-            print(f"{'='*60}")
+            print(f"{'=' * 60}")
             print(f"  data_buf[:8] before: {[hex(b) for b in before]}")
             print(f"  data_buf[:8] after:  {[hex(b) for b in after]}")
             print(f"  Magic received:      {is_magic}")
             print(f"  → Rank 0 received magic from Rank 1. {'OK' if is_magic else 'FAILED — magic not received'}")
 
         if rank == 1:
-            print(f"\n{'='*60}")
+            print(f"\n{'=' * 60}")
             print(f"Rank 1 (caller/writer) — GPU: {device}")
-            print(f"{'='*60}")
+            print(f"{'=' * 60}")
             print(f"  data_buf[:8] before: {[hex(b) for b in before]}")
             print(f"  data_buf[:8] after:  {[hex(b) for b in after]}")
             print(f"  Local side effect:   {is_magic}")
 
             if is_magic:
-                print(f"\n  *** BUG CONFIRMED ***")
+                print("\n  *** BUG CONFIRMED ***")
                 print(f"  transfer_sync_write targeted Rank 0's GPU ({hex(peer_data_ptr)})")
                 print(f"  but also modified Rank 1's own GPU ({hex(data_buf.data_ptr())})")
-                print(f"  These are DIFFERENT addresses on DIFFERENT GPUs.")
-                print(f"  This violates standard RDMA WRITE semantics.")
+                print("  These are DIFFERENT addresses on DIFFERENT GPUs.")
+                print("  This violates standard RDMA WRITE semantics.")
             else:
                 changed = after[:4] != before[:4]
                 if changed:
-                    print(f"\n  PARTIAL SIDE EFFECT: data_buf[:4] changed but not to magic.")
+                    print("\n  PARTIAL SIDE EFFECT: data_buf[:4] changed but not to magic.")
                     print(f"  before: {[hex(b) for b in before[:4]]}")
                     print(f"  after:  {[hex(b) for b in after[:4]]}")
                 else:
-                    print(f"\n  No local side effect detected. data_buf unchanged.")
-                    print(f"  transfer_sync_write behaved correctly.")
+                    print("\n  No local side effect detected. data_buf unchanged.")
+                    print("  transfer_sync_write behaved correctly.")
 
         print()
 

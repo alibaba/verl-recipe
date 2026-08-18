@@ -91,6 +91,7 @@ def print_tensor(label, tensor, show_hex=False):
 # Case 1: Sender side is SAFE
 # ═════════════════════════════════════════════════════════════════════════════
 
+
 def simulate_sender_safe():
     """R0 (sender) is safe: magic is transient, overwritten by next bucket."""
     print("=" * 64)
@@ -103,11 +104,11 @@ def simulate_sender_safe():
     raw = embed.view(torch.uint8)
 
     # Step 1: R0 fills bufs[0] with bucket 0 data
-    r0["bufs"][0][:len(raw)] = raw
+    r0["bufs"][0][: len(raw)] = raw
     print_tensor("1. R0 fills bufs[0]", r0["bufs"][0])
 
     # Step 2: R1 RDMA-reads from R0 (copy, doesn't affect R0)
-    r1_copy = r0["bufs"][0][:len(raw)].clone()
+    r1_copy = r0["bufs"][0][: len(raw)].clone()
     print_tensor("2. R1 RDMA-reads (copy)", r1_copy)
 
     # Step 3: R1 writes magic to R0's bufs[0][:4]
@@ -118,7 +119,7 @@ def simulate_sender_safe():
 
     # Step 4: R0 sees magic → overwrites bufs[0] with bucket 2 data
     new_data = torch.tensor([0.1, 0.2, 0.3, 0.4], dtype=torch.bfloat16, device=device)
-    r0["bufs"][0][:len(new_data.view(torch.uint8))] = new_data.view(torch.uint8)
+    r0["bufs"][0][: len(new_data.view(torch.uint8))] = new_data.view(torch.uint8)
     print_tensor("4. R0 reuses bufs[0] for new data", r0["bufs"][0])
     print("    → R0 unaffected. Magic was transient. ✅")
     print()
@@ -127,6 +128,7 @@ def simulate_sender_safe():
 # ═════════════════════════════════════════════════════════════════════════════
 # Case 2: Daisy chain with Mooncake local side-effect — BUG
 # ═════════════════════════════════════════════════════════════════════════════
+
 
 def simulate_daisy_chain_buggy():
     """
@@ -157,11 +159,11 @@ def simulate_daisy_chain_buggy():
     raw = embed.view(torch.uint8)
 
     # ── R0: fill buffer ──
-    r0["bufs"][0][:len(raw)] = raw
+    r0["bufs"][0][: len(raw)] = raw
     print_tensor("1. R0 fills bufs[0]", r0["bufs"][0])
 
     # ── R1: RDMA read from R0 ──
-    r1["bufs"][0][:len(raw)] = r0["bufs"][0][:len(raw)].clone()
+    r1["bufs"][0][: len(raw)] = r0["bufs"][0][: len(raw)].clone()
     print_tensor("2. R1 RDMA-reads from R0", r1["bufs"][0])
 
     # ── R1: forward buffer ptr to R2 ──
@@ -169,7 +171,7 @@ def simulate_daisy_chain_buggy():
     print(f"    3. R1 forwards ptr={hex(r1_fwd_ptr)} to R2")
 
     # ── R1: yield tensor views (consumer will clone later) ──
-    r1_view = r1["bufs"][0][:len(raw)].view(torch.bfloat16)
+    r1_view = r1["bufs"][0][: len(raw)].view(torch.bfloat16)
     print_tensor("4. R1 yields view (shared mem with bufs[0])", r1["bufs"][0])
 
     # ── R1: write magic to R0 (completion signal) ──
@@ -185,10 +187,10 @@ def simulate_daisy_chain_buggy():
     print_tensor("   6. R1 consumer .clone() reads", r1_consumer_data)
 
     # ── R2: RDMA read from R1 (R1's buffer is NOW CORRUPTED) ──
-    r2["bufs"][0][:len(raw)] = r1["bufs"][0][:len(raw)].clone()
+    r2["bufs"][0][: len(raw)] = r1["bufs"][0][: len(raw)].clone()
     print_tensor("   7. R2 RDMA-reads from R1 (CORRUPTED source!)", r2["bufs"][0])
 
-    r2_view = r2["bufs"][0][:len(raw)].view(torch.bfloat16)
+    r2_view = r2["bufs"][0][: len(raw)].view(torch.bfloat16)
     r2_consumer_data = r2_view.clone()
     print_tensor("   8. R2 consumer .clone() reads", r2_consumer_data)
 
@@ -202,10 +204,12 @@ def simulate_daisy_chain_buggy():
     print("    ── Verification ──")
     print(f"    Magic as bf16:   {magic_bf16}")
     print(f"    Expected:        {embed.float().cpu().tolist()}")
-    print(f"    R1 consumer got: {r1_consumer_data.float().cpu().tolist()}  "
-          f"{'CORRUPTED ❌' if r1_corrupted else 'OK ✅'}")
-    print(f"    R2 consumer got: {r2_consumer_data.float().cpu().tolist()}  "
-          f"{'CORRUPTED ❌' if r2_corrupted else 'OK ✅'}")
+    print(
+        f"    R1 consumer got: {r1_consumer_data.float().cpu().tolist()}  {'CORRUPTED ❌' if r1_corrupted else 'OK ✅'}"
+    )
+    print(
+        f"    R2 consumer got: {r2_consumer_data.float().cpu().tolist()}  {'CORRUPTED ❌' if r2_corrupted else 'OK ✅'}"
+    )
     print()
     print("    Root cause: Mooncake transfer_sync_write modifies caller's")
     print("    own GPU memory. R1's magic write to R0 also overwrites")
@@ -218,6 +222,7 @@ def simulate_daisy_chain_buggy():
 # ═════════════════════════════════════════════════════════════════════════════
 # Case 3: Daisy chain WITHOUT Mooncake side-effect (hypothetical correct RDMA)
 # ═════════════════════════════════════════════════════════════════════════════
+
 
 def simulate_daisy_chain_no_side_effect():
     """
@@ -237,14 +242,14 @@ def simulate_daisy_chain_no_side_effect():
     embed = torch.tensor(EMBED_VALUES, dtype=torch.bfloat16, device=device)
     raw = embed.view(torch.uint8)
 
-    r0["bufs"][0][:len(raw)] = raw
+    r0["bufs"][0][: len(raw)] = raw
     print_tensor("1. R0 fills bufs[0]", r0["bufs"][0])
 
-    r1["bufs"][0][:len(raw)] = r0["bufs"][0][:len(raw)].clone()
+    r1["bufs"][0][: len(raw)] = r0["bufs"][0][: len(raw)].clone()
     print_tensor("2. R1 RDMA-reads from R0", r1["bufs"][0])
 
-    print(f"    3. R1 forwards ptr to R2")
-    r1_view = r1["bufs"][0][:len(raw)].view(torch.bfloat16)
+    print("    3. R1 forwards ptr to R2")
+    r1_view = r1["bufs"][0][: len(raw)].view(torch.bfloat16)
 
     # Magic write to R0 — NO local side effect
     print("    4. R1 writes magic to R0 (no local side-effect)")
@@ -255,8 +260,8 @@ def simulate_daisy_chain_no_side_effect():
     r1_consumer_data = r1_view.clone()
     print_tensor("   5. R1 consumer .clone()", r1_consumer_data)
 
-    r2["bufs"][0][:len(raw)] = r1["bufs"][0][:len(raw)].clone()
-    r2_consumer_data = r2["bufs"][0][:len(raw)].view(torch.bfloat16).clone()
+    r2["bufs"][0][: len(raw)] = r1["bufs"][0][: len(raw)].clone()
+    r2_consumer_data = r2["bufs"][0][: len(raw)].view(torch.bfloat16).clone()
     print_tensor("   6. R2 consumer .clone()", r2_consumer_data)
 
     print()
@@ -272,6 +277,7 @@ def simulate_daisy_chain_no_side_effect():
 # ═════════════════════════════════════════════════════════════════════════════
 # Case 4: Daisy chain with fix (magic_recv separate buffer)
 # ═════════════════════════════════════════════════════════════════════════════
+
 
 def simulate_daisy_chain_fixed():
     """
@@ -295,14 +301,14 @@ def simulate_daisy_chain_fixed():
     embed = torch.tensor(EMBED_VALUES, dtype=torch.bfloat16, device=device)
     raw = embed.view(torch.uint8)
 
-    r0["bufs"][0][:len(raw)] = raw
+    r0["bufs"][0][: len(raw)] = raw
     print_tensor("1. R0 fills bufs[0]", r0["bufs"][0])
 
-    r1["bufs"][0][:len(raw)] = r0["bufs"][0][:len(raw)].clone()
+    r1["bufs"][0][: len(raw)] = r0["bufs"][0][: len(raw)].clone()
     print_tensor("2. R1 RDMA-reads from R0", r1["bufs"][0])
 
-    print(f"    3. R1 forwards ptr to R2")
-    r1_view = r1["bufs"][0][:len(raw)].view(torch.bfloat16)
+    print("    3. R1 forwards ptr to R2")
+    r1_view = r1["bufs"][0][: len(raw)].view(torch.bfloat16)
 
     # FIX: write magic to R0's magic_recv, NOT data buffer
     # Even with Mooncake side-effect, it hits R1's magic_recv (harmless)
@@ -318,8 +324,8 @@ def simulate_daisy_chain_fixed():
     r1_consumer_data = r1_view.clone()
     print_tensor("   5. R1 consumer .clone()", r1_consumer_data)
 
-    r2["bufs"][0][:len(raw)] = r1["bufs"][0][:len(raw)].clone()
-    r2_consumer_data = r2["bufs"][0][:len(raw)].view(torch.bfloat16).clone()
+    r2["bufs"][0][: len(raw)] = r1["bufs"][0][: len(raw)].clone()
+    r2_consumer_data = r2["bufs"][0][: len(raw)].view(torch.bfloat16).clone()
     print_tensor("   6. R2 consumer .clone()", r2_consumer_data)
 
     print()
@@ -357,7 +363,7 @@ if __name__ == "__main__":
     print("=" * 64)
     print("Summary")
     print("=" * 64)
-    print(f"  Case 1 — Sender (R0):              SAFE (magic transient)")
+    print("  Case 1 — Sender (R0):              SAFE (magic transient)")
     print(f"  Case 2 — Daisy chain + Mooncake:   {'BUG CONFIRMED ❌' if bug_confirmed else 'NOT REPRODUCED'}")
     print(f"  Case 3 — Daisy chain w/o side-eff: {'SAFE ✅' if no_side_effect_ok else 'FAILED'}")
     print(f"  Case 4 — Daisy chain + fix:        {'SAFE ✅' if fix_ok else 'FAILED'}")

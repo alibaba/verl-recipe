@@ -9,6 +9,7 @@ external SGLang and decode to sensible text.
 Run from a Ray node with /mnt/models available (e.g. the sglang pod):
     python3 validate_generation.py
 """
+
 import asyncio
 import os
 
@@ -37,7 +38,8 @@ async def main():
     server_id, server = await lb.acquire_server.remote(request_id="req-1")
     try:
         out = await server.generate.remote(
-            request_id="req-1", prompt_ids=prompt_ids,
+            request_id="req-1",
+            prompt_ids=prompt_ids,
             sampling_params={"temperature": 0, "max_new_tokens": 16},
         )
     finally:

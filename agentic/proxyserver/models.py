@@ -26,9 +26,7 @@ class CompletionRecord(BaseModel):
         default_factory=list,
         description="Log probabilities for each generated token (may be empty when cached on worker)",
     )
-    finish_reason: str | None = Field(
-        default=None, description="Reason generation stopped: stop, tool_calls, length"
-    )
+    finish_reason: str | None = Field(default=None, description="Reason generation stopped: stop, tool_calls, length")
     tool_calls: list[dict[str, Any]] | None = Field(
         default=None, description="Parsed tool calls from the completion, if any"
     )
@@ -74,7 +72,9 @@ class TrainingRoundTiming(BaseModel):
     inference_end: float | None = Field(default=None, description="Inference/generation phase end timestamp")
     weight_sync_start: float | None = Field(default=None, description="Weight sync start timestamp")
     weight_sync_end: float | None = Field(default=None, description="Weight sync end timestamp")
-    training_start: float | None = Field(default=None, description="Training update phase start timestamp (after inference)")
+    training_start: float | None = Field(
+        default=None, description="Training update phase start timestamp (after inference)"
+    )
     training_end: float | None = Field(default=None, description="Training update phase end timestamp")
     reward_start: float | None = Field(default=None, description="Reward computation start timestamp")
     reward_end: float | None = Field(default=None, description="Reward computation end timestamp")
@@ -92,4 +92,6 @@ class TrainingRoundTiming(BaseModel):
     update_actor_end: float | None = Field(default=None, description="Actor update end timestamp")
     checkpoint_start: float | None = Field(default=None, description="Checkpoint save start timestamp")
     checkpoint_end: float | None = Field(default=None, description="Checkpoint save end timestamp")
-    phase_durations: dict[str, float] | None = Field(default=None, description="Raw timing_raw durations from marked_timer")
+    phase_durations: dict[str, float] | None = Field(
+        default=None, description="Raw timing_raw durations from marked_timer"
+    )

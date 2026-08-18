@@ -35,6 +35,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import types as _types
+
 sys.modules.setdefault("torch", _types.SimpleNamespace(load=None))
 import live_timeline as lt  # noqa: E402  (reuse HTTP + trial fetch + matching)
 
@@ -52,22 +53,26 @@ class TraceBuilder:
     def new_process(self, name):
         self._pid += 1
         pid = self._pid
-        self.events.append({"ph": "M", "name": "process_name", "pid": pid,
-                            "args": {"name": name}})
+        self.events.append({"ph": "M", "name": "process_name", "pid": pid, "args": {"name": name}})
         return pid
 
     def thread(self, pid, tid, name):
-        self.events.append({"ph": "M", "name": "thread_name", "pid": pid, "tid": tid,
-                            "args": {"name": name}})
+        self.events.append({"ph": "M", "name": "thread_name", "pid": pid, "tid": tid, "args": {"name": name}})
 
     def slice(self, pid, tid, name, start, end, args=None):
         if not (lt._valid(start) and lt._valid(end)) or end < start:
             return
-        self.events.append({
-            "ph": "X", "pid": pid, "tid": tid, "name": name,
-            "ts": _us(start), "dur": _us(end) - _us(start),
-            "args": args or {},
-        })
+        self.events.append(
+            {
+                "ph": "X",
+                "pid": pid,
+                "tid": tid,
+                "name": name,
+                "ts": _us(start),
+                "dur": _us(end) - _us(start),
+                "args": args or {},
+            }
+        )
 
 
 # --------------------------------------------------------------------------- #
@@ -77,8 +82,7 @@ def _fetch_sessions(base):
     except Exception as exc:  # noqa: BLE001
         print(f"[warn] /sessions failed: {exc}", file=sys.stderr)
         return {}
-    sids = [s["session_id"] for s in listing.get("sessions", [])
-            if not str(s["session_id"]).startswith("timing_")]
+    sids = [s["session_id"] for s in listing.get("sessions", []) if not str(s["session_id"]).startswith("timing_")]
 
     def _one(sid):
         try:
@@ -130,8 +134,9 @@ def _add_turns_track(tb, pid, turns):
 
         # tool exec = gap between previous turn's response and this request
         if prev_resp is not None and req > prev_resp:
-            tb.slice(pid, 2, f"🔧 tool exec: {prev_tool or '?'}", prev_resp, req,
-                     {"kind": "tool_exec", "tool": prev_tool})
+            tb.slice(
+                pid, 2, f"🔧 tool exec: {prev_tool or '?'}", prev_resp, req, {"kind": "tool_exec", "tool": prev_tool}
+            )
 
         tool = tool_args = tool_output = None
         tcs = turn.get("tool_calls") or []
@@ -142,21 +147,44 @@ def _add_turns_track(tb, pid, turns):
             tool_output = lt._clip(tool_outputs.get(tcs[0].get("id"), ""), 4000)
 
         name = f"turn {i}" + (f" · {tool}" if tool else "")
-        tb.slice(pid, 2, name, req, resp, {
-            "kind": "turn", "turn": i,
-            "finish_reason": turn.get("finish_reason"),
-            "tool": tool, "parameters": tool_args, "observation": tool_output,
-            "gpu_id": turn.get("gpu_id"), "worker_id": turn.get("worker_id"),
-            "node_id": turn.get("node_id"),
-            "relay_round_trip_ms": tm.get("relay_round_trip_ms"),
-            "completion_chars": len(turn.get("completion_text") or ""),
-        })
+        tb.slice(
+            pid,
+            2,
+            name,
+            req,
+            resp,
+            {
+                "kind": "turn",
+                "turn": i,
+                "finish_reason": turn.get("finish_reason"),
+                "tool": tool,
+                "parameters": tool_args,
+                "observation": tool_output,
+                "gpu_id": turn.get("gpu_id"),
+                "worker_id": turn.get("worker_id"),
+                "node_id": turn.get("node_id"),
+                "relay_round_trip_ms": tm.get("relay_round_trip_ms"),
+                "completion_chars": len(turn.get("completion_text") or ""),
+            },
+        )
         # nested GPU-side sub-slices (sequential inside the turn)
         tb.slice(pid, 2, "queue", req, tm.get("worker_received_at"), {"kind": "queue"})
-        tb.slice(pid, 2, "inference", tm.get("worker_inference_started_at"),
-                 tm.get("worker_inference_completed_at"), {"kind": "inference"})
-        tb.slice(pid, 2, "tool_parse", tm.get("worker_inference_completed_at"),
-                 tm.get("worker_tool_parse_completed_at"), {"kind": "tool_parse"})
+        tb.slice(
+            pid,
+            2,
+            "inference",
+            tm.get("worker_inference_started_at"),
+            tm.get("worker_inference_completed_at"),
+            {"kind": "inference"},
+        )
+        tb.slice(
+            pid,
+            2,
+            "tool_parse",
+            tm.get("worker_inference_completed_at"),
+            tm.get("worker_tool_parse_completed_at"),
+            {"kind": "tool_parse"},
+        )
 
         prev_resp, prev_tool = resp, tool
 
@@ -171,9 +199,14 @@ def _add_training(tb, base):
     tb.thread(pid, 1, "steps")
     for t in data.get("timings", []):
         gs, ep = t.get("global_step"), t.get("epoch")
-        tb.slice(pid, 1, f"step {ep}/{gs}", t.get("step_start"), t.get("step_end"),
-                 {k: v for k, v in (t.get("phase_durations") or {}).items()
-                  if isinstance(v, (int, float))})
+        tb.slice(
+            pid,
+            1,
+            f"step {ep}/{gs}",
+            t.get("step_start"),
+            t.get("step_end"),
+            {k: v for k, v in (t.get("phase_durations") or {}).items() if isinstance(v, (int, float))},
+        )
         tb.slice(pid, 1, "inference", t.get("inference_start"), t.get("inference_end"))
         tb.slice(pid, 1, "weight_sync", t.get("weight_sync_start"), t.get("weight_sync_end"))
         tb.slice(pid, 1, "training", t.get("training_start"), t.get("training_end"))
@@ -188,16 +221,21 @@ def build_trace(slime, harbor, trial_filter=None):
     sessions = _fetch_sessions(slime)
     if trial_filter:
         sessions = {k: v for k, v in sessions.items() if trial_filter in k}
-        print(f"[info] filtered to {len(sessions)} sessions matching "
-              f"'{trial_filter}'", file=sys.stderr)
+        print(f"[info] filtered to {len(sessions)} sessions matching '{trial_filter}'", file=sys.stderr)
 
     # link kuberl trials <-> proxy sessions (exact task_id, then time overlap)
     agents = []
     for sid, detail in sessions.items():
         times = [_turn_span(t)[0] for t in detail.get("turns", [])]
         times = [x for x in times if lt._valid(x)]
-        agents.append({"session_id": sid, "start": min(times) if times else 0,
-                       "end": max(times) if times else 0, "detail": detail})
+        agents.append(
+            {
+                "session_id": sid,
+                "start": min(times) if times else 0,
+                "end": max(times) if times else 0,
+                "detail": detail,
+            }
+        )
     lt.match_trials_to_agents(agents, trials)
 
     merged = 0
@@ -221,8 +259,7 @@ def build_trace(slime, harbor, trial_filter=None):
         if trial.get("_matched"):
             continue
         name = trial.get("trial_name") or trial.get("run_id") or trial.get("task_id")
-        if trial_filter and trial_filter not in (trial.get("task_id") or "") \
-                and trial_filter not in (name or ""):
+        if trial_filter and trial_filter not in (trial.get("task_id") or "") and trial_filter not in (name or ""):
             continue
         pid = tb.new_process(f"{name}  [r={trial.get('reward')} {trial.get('status')}]")
         _add_phase_track(tb, pid, trial.get("phases"), trial.get("finished_at"))
@@ -240,22 +277,23 @@ def build_trace(slime, harbor, trial_filter=None):
         span_s = (max(e["ts"] + e["dur"] for e in slices)) / 1e6
         print(f"[info] normalized to t0=0; trace span {span_s:.1f}s", file=sys.stderr)
 
-    print(f"[info] linked {merged} merged trials; {len(tb.events)} trace events",
-          file=sys.stderr)
+    print(f"[info] linked {merged} merged trials; {len(tb.events)} trace events", file=sys.stderr)
     return {"traceEvents": tb.events, "displayTimeUnit": "ms"}
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--slime", default="http://localhost:8080")
     ap.add_argument("--harbor", default="http://localhost:8085")
-    ap.add_argument("-o", "--out",
-                    default=str(Path(__file__).resolve().parent
-                                / "live_timeline_out" / "rollout.perfetto.json"))
-    ap.add_argument("--trial", default=None,
-                    help="only export sessions whose id contains this substring "
-                         "(e.g. django__django-10880); yields a small, readable trace")
+    ap.add_argument(
+        "-o", "--out", default=str(Path(__file__).resolve().parent / "live_timeline_out" / "rollout.perfetto.json")
+    )
+    ap.add_argument(
+        "--trial",
+        default=None,
+        help="only export sessions whose id contains this substring "
+        "(e.g. django__django-10880); yields a small, readable trace",
+    )
     args = ap.parse_args()
 
     trace = build_trace(args.slime, args.harbor, trial_filter=args.trial)

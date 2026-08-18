@@ -30,9 +30,10 @@ from __future__ import annotations
 
 import hashlib
 import logging
-import tomllib
 from pathlib import Path
-from typing import Any, Iterable, Iterator, Optional
+from typing import Any, Iterator, Optional
+
+import tomllib
 
 logger = logging.getLogger(__name__)
 
@@ -95,11 +96,7 @@ def task_to_verl_row(
     extra_info: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     """Map a parsed local task to one verl RL row."""
-    metadata = (
-        task["task_config"].get("metadata", {})
-        if isinstance(task["task_config"], dict)
-        else {}
-    )
+    metadata = task["task_config"].get("metadata", {}) if isinstance(task["task_config"], dict) else {}
     info: dict[str, Any] = {
         "split": split,
         "index": index,
@@ -215,8 +212,7 @@ def build_verl_parquet_from_local(
     )
     if not rows:
         raise ValueError(
-            f"no harbor tasks found under {root_path}; "
-            "expected subdirectories containing task.toml and instruction.md"
+            f"no harbor tasks found under {root_path}; expected subdirectories containing task.toml and instruction.md"
         )
 
     out.parent.mkdir(parents=True, exist_ok=True)

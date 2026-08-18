@@ -127,22 +127,28 @@ def _build_environment_kwargs() -> dict:
 
     if LLM_PROXY_URL:
         # When using LLM proxy, set OPENAI_BASE_URL to the proxy
-        extra_env.extend([
-            {"name": "OPENAI_API_KEY", "value": "dummy"},
-            {"name": "OPENAI_BASE_URL", "value": LLM_PROXY_URL},
-        ])
+        extra_env.extend(
+            [
+                {"name": "OPENAI_API_KEY", "value": "dummy"},
+                {"name": "OPENAI_BASE_URL", "value": LLM_PROXY_URL},
+            ]
+        )
     else:
-        extra_env.extend([
-            {"name": "OPENAI_API_KEY", "value": OPENAI_API_KEY},
-            {"name": "OPENAI_BASE_URL", "value": OPENAI_ENDPOINT},
-        ])
+        extra_env.extend(
+            [
+                {"name": "OPENAI_API_KEY", "value": OPENAI_API_KEY},
+                {"name": "OPENAI_BASE_URL", "value": OPENAI_ENDPOINT},
+            ]
+        )
 
     # Recommended: internal mirrors for uv and pip
-    extra_env.extend([
-        {"name": "UV_INDEX_URL", "value": "https://mirrors.aliyun.com/pypi/simple/"},
-        {"name": "PIP_INDEX_URL", "value": "https://mirrors.aliyun.com/pypi/simple/"},
-        {"name": "PIP_TRUSTED_HOST", "value": "mirrors.aliyun.com"},
-    ])
+    extra_env.extend(
+        [
+            {"name": "UV_INDEX_URL", "value": "https://mirrors.aliyun.com/pypi/simple/"},
+            {"name": "PIP_INDEX_URL", "value": "https://mirrors.aliyun.com/pypi/simple/"},
+            {"name": "PIP_TRUSTED_HOST", "value": "mirrors.aliyun.com"},
+        ]
+    )
 
     env_kwargs: dict = {
         "image_pull_secret": IMAGE_PULL_SECRET,
@@ -150,11 +156,13 @@ def _build_environment_kwargs() -> dict:
         # REQUIRED: mount PVC at /mnt/data for pre-cloned sweagent-repo
         "pod_overrides": {
             "spec": {
-                "containers": [{
-                    "volumeMounts": [
-                        {"name": "data", "mountPath": "/mnt/data", "readOnly": True},
-                    ],
-                }],
+                "containers": [
+                    {
+                        "volumeMounts": [
+                            {"name": "data", "mountPath": "/mnt/data", "readOnly": True},
+                        ],
+                    }
+                ],
                 "volumes": [
                     {"name": "data", "persistentVolumeClaim": {"claimName": PVC_CLAIM_NAME}},
                 ],
@@ -218,9 +226,11 @@ def main() -> None:
     print(f"  error:     {result.error}")
     print(f"  rewards:   {result.rewards}")
     if result.token_usage:
-        print(f"  tokens:    input={result.token_usage.n_input_tokens} "
-              f"output={result.token_usage.n_output_tokens} "
-              f"cache={result.token_usage.n_cache_tokens}")
+        print(
+            f"  tokens:    input={result.token_usage.n_input_tokens} "
+            f"output={result.token_usage.n_output_tokens} "
+            f"cache={result.token_usage.n_cache_tokens}"
+        )
         print(f"  cost:      ${result.token_usage.cost_usd}")
     if result.retry_count:
         print(f"  retries:   {result.retry_count}")

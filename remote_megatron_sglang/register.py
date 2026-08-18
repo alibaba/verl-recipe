@@ -28,12 +28,22 @@ worker that sets the env var). Its top-level side effects:
 2. Register a lazy loader for the ActorRollout forwarder worker via
    :meth:`RemoteBackendRegistry.register_worker`. ``main_ppo`` reads it back
    with :meth:`RemoteBackendRegistry.get_worker` to pick ``actor_rollout_cls``.
+3. Register the ``remote_megatron_sglang`` **V1 trainer mode** so
+   ``TaskRunnerV1`` can resolve it via
+   ``get_trainer_cls(config.trainer.v1.trainer_mode)``. This has to happen here
+   (not only on the driver) because ``TaskRunnerV1`` is a Ray actor: it imports
+   verl — and therefore this module — in its own process.
 """
 
 from __future__ import annotations
 
 from recipe.remote_megatron_sglang import backend as _backend  # noqa: F401  registers @register + rollout replica
-from verl.remote_backend import RemoteBackendRegistry
+from recipe.remote_megatron_sglang import v1_trainer as _v1_trainer  # noqa: F401  registers the V1 trainer mode
+
+try:
+    from verl.remote_backend import RemoteBackendRegistry
+except ImportError:  # upstream verl main does not ship verl.remote_backend (PR #6422)
+    from recipe.remote_megatron_sglang.remote_backend_compat import RemoteBackendRegistry
 
 _BACKEND_NAME = "megatron_sglang"
 

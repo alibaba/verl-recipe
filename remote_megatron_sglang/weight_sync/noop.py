@@ -36,7 +36,7 @@ class NoopTransport(WeightSyncTransport):
         self._warned = False
 
     @classmethod
-    def from_config(cls, cfg, train_client, infer_client) -> "NoopTransport":
+    def from_config(cls, cfg, train_client, infer_client) -> NoopTransport:
         return cls(cfg, train_client, infer_client)
 
     async def setup(self) -> None:

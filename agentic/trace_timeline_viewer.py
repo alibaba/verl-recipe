@@ -23,7 +23,6 @@ from typing import Any
 
 import torch
 
-
 CACHE_VERSION = 1
 
 
@@ -494,12 +493,12 @@ def _build_items_from_trace(sample: dict[str, Any], sample_idx: int) -> dict[str
                 {
                     "type": "span",
                     "state": "closed_span",
-                    "name": f'{span["name"]} [{suffix}]',
+                    "name": f"{span['name']} [{suffix}]",
                     "start_ts": _round_float(span["start_ts"]),
                     "end_ts": _round_float(span["end_ts"]),
                     "display_end_ts": _round_float(span["display_end_ts"]),
                     "attempt": span["attempt"],
-                    "span_id": f'{span.get("span_id") or span["name"]}:pd:{role}',
+                    "span_id": f"{span.get('span_id') or span['name']}:pd:{role}",
                     "parent_span_id": span.get("span_id"),
                     "parent_span_name": span["name"],
                     "lane": next_virtual_lane,
@@ -1005,10 +1004,12 @@ HTML_TEMPLATE = r"""<!doctype html>
 
     function pointShape(name) {
       const value = `${name ?? ''}`.toLowerCase();
-      if (value.includes('schedule') || value.includes('enqueue') || value.includes('dequeue') || value.includes('buffer')) {
+      if (value.includes('schedule') || value.includes('enqueue') || value.includes('dequeue')
+          || value.includes('buffer')) {
         return 'triangle';
       }
-      if (value.includes('assign') || value.includes('complete') || value.includes('selected') || value.includes('finish')) {
+      if (value.includes('assign') || value.includes('complete') || value.includes('selected')
+          || value.includes('finish')) {
         return 'diamond';
       }
       if (value.includes('create') || value.includes('attempt') || value.includes('start')) {
@@ -1046,7 +1047,8 @@ HTML_TEMPLATE = r"""<!doctype html>
     }
 
     function rowSummaryItem(row) {
-      const attempts = [...new Set((row.items || []).map(item => item.attempt).filter(v => v != null))].sort((a, b) => a - b);
+      const attempts = [...new Set((row.items || []).map(item => item.attempt).filter(v => v != null))]
+        .sort((a, b) => a - b);
       return {
         type: 'row_summary',
         name: 'sample summary',
@@ -1249,7 +1251,8 @@ HTML_TEMPLATE = r"""<!doctype html>
           ['decode_transfer', '[D] kv transfer'],
           ['decode_prealloc', '[D] prealloc'],
         ];
-        html += '<span style="color:var(--muted);margin-left:8px;font-size:11px">PD (collapsed: P over D; expanded: separate P/D lanes):</span>';
+        html += '<span style="color:var(--muted);margin-left:8px;font-size:11px">'
+          + 'PD (collapsed: P over D; expanded: separate P/D lanes):</span>';
         for (const [phase, label] of pdLegend) {
           html += `<span class="chip" style="font-size:11px">` +
             `<span class="bar" style="background:${pdPhaseColor(phase, 0.85)}"></span>` +
@@ -1315,7 +1318,8 @@ HTML_TEMPLATE = r"""<!doctype html>
       document.getElementById('summary').textContent =
         `${state.rows.length} filtered / ${state.rawRows.length} total`;
       document.getElementById('footer').textContent =
-        `view range: ${niceDuration(state.viewEnd - state.viewStart)} | global range: ${niceDuration(state.globalEnd - state.globalStart)}`;
+        `view range: ${niceDuration(state.viewEnd - state.viewStart)}`
+          + ` | global range: ${niceDuration(state.globalEnd - state.globalStart)}`;
     }
 
     function timeToX(timestamp) {
@@ -1777,8 +1781,10 @@ HTML_TEMPLATE = r"""<!doctype html>
                 if (a.prompt_tokens != null) pdParts.push(`P:${a.prompt_tokens}`);
                 if (a.completion_tokens != null) pdParts.push(`D:${a.completion_tokens}`);
                 if (a.cached_tokens != null && a.cached_tokens > 0) pdParts.push(`cache:${a.cached_tokens}`);
-                if (a.pd_prefill_forward_duration != null) pdParts.push(`pf:${(a.pd_prefill_forward_duration*1000).toFixed(0)}ms`);
-                if (a.pd_decode_forward_duration != null) pdParts.push(`df:${(a.pd_decode_forward_duration*1000).toFixed(0)}ms`);
+                if (a.pd_prefill_forward_duration != null)
+                  pdParts.push(`pf:${(a.pd_prefill_forward_duration*1000).toFixed(0)}ms`);
+                if (a.pd_decode_forward_duration != null)
+                  pdParts.push(`df:${(a.pd_decode_forward_duration*1000).toFixed(0)}ms`);
                 if (a.pd_transfer_speed_gb_s != null) pdParts.push(`${a.pd_transfer_speed_gb_s.toFixed(1)}GB/s`);
                   const pdSuffix = pdParts.length > 0 ? ` | ${pdParts.join(' ')}` : '';
                   return `${item.name} | attempt=${item.attempt}${pdSuffix}`;
@@ -1880,7 +1886,8 @@ HTML_TEMPLATE = r"""<!doctype html>
         const phases = pdPhases(attrs);
         if (phases) {
           const totalDur = phases.reduce((s, p) => s + p.duration, 0);
-          const pPhases = phases.filter(p => p.phase.startsWith('prefill_') || p.phase === 'bootstrap' || p.phase === 'alloc_waiting');
+          const pPhases = phases.filter(
+            p => p.phase.startsWith('prefill_') || p.phase === 'bootstrap' || p.phase === 'alloc_waiting');
           const dPhases = phases.filter(p => p.phase.startsWith('decode_'));
           const fmtPhase = (p) => {
             const ms = (p.duration * 1000).toFixed(1);
@@ -2132,9 +2139,12 @@ HTML_TEMPLATE = r"""<!doctype html>
       });
       document.getElementById('sortMode').addEventListener('change', applyFilterAndSort);
       document.getElementById('sortDesc').addEventListener('change', applyFilterAndSort);
-      document.getElementById('showEvents').addEventListener('change', () => { updateLegend(); updateStats(); scheduleDraw(); });
-      document.getElementById('showOpenSpans').addEventListener('change', () => { layout(); updateLegend(); updateStats(); scheduleDraw(); });
-      document.getElementById('showOrphans').addEventListener('change', () => { updateLegend(); updateStats(); scheduleDraw(); });
+      document.getElementById('showEvents').addEventListener('change',
+        () => { updateLegend(); updateStats(); scheduleDraw(); });
+      document.getElementById('showOpenSpans').addEventListener('change',
+        () => { layout(); updateLegend(); updateStats(); scheduleDraw(); });
+      document.getElementById('showOrphans').addEventListener('change',
+        () => { updateLegend(); updateStats(); scheduleDraw(); });
       document.getElementById('toggleControls').addEventListener('click', () => setCompactUI(!state.compactUI));
       document.getElementById('laneHeight').addEventListener('input', (event) => {
         state.laneHeight = Number(event.target.value);

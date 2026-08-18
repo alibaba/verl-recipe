@@ -33,13 +33,17 @@ import asyncio
 import logging
 from typing import Optional
 
-from tensordict import TensorDict
-
 # Import the adapter so the megatron_sglang backend + rollout replica register
 # in THIS process too. Ray worker processes don't inherit the driver's registry
 # state, so the forwarder must trigger registration itself.
 from recipe.remote_megatron_sglang import backend as _backend  # noqa: F401
-from verl.remote_backend import RemoteBackendRegistry
+from tensordict import TensorDict
+
+try:
+    from verl.remote_backend import RemoteBackendRegistry
+except ImportError:  # upstream verl main does not ship verl.remote_backend (PR #6422)
+    from recipe.remote_megatron_sglang.remote_backend_compat import RemoteBackendRegistry
+
 from verl.single_controller.base import Worker
 from verl.single_controller.base.decorator import Dispatch, make_nd_compute_dataproto_dispatch_fn, register
 

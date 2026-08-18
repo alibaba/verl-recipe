@@ -28,16 +28,20 @@ import asyncio
 import json
 import logging
 import os
-from typing import Any, AsyncIterator, Callable, Optional, Union
+from typing import Any, AsyncIterator, Callable, Optional
 from uuid import uuid4
 
 import httpx
-from litellm.llms.custom_httpx.http_handler import (AsyncHTTPHandler,
-                                                    HTTPHandler)
+from litellm.llms.custom_httpx.http_handler import AsyncHTTPHandler
 from litellm.llms.custom_llm import CustomLLM, CustomLLMError
-from litellm.types.utils import (ChatCompletionTokenLogprob, ChoiceLogprobs,
-                                 Choices, GenericStreamingChunk, Message,
-                                 Usage)
+from litellm.types.utils import (
+    ChatCompletionTokenLogprob,
+    ChoiceLogprobs,
+    Choices,
+    GenericStreamingChunk,
+    Message,
+    Usage,
+)
 from litellm.utils import ModelResponse
 
 logger = logging.getLogger(__name__)
@@ -110,14 +114,16 @@ class VLLMRayProvider(CustomLLM):
                     if props is not None and not isinstance(props, dict):
                         logger.warning(
                             "[SANITIZE] tool '%s' parameters.properties is %s, coercing to {}",
-                            fn.get("name", "?"), type(props).__name__,
+                            fn.get("name", "?"),
+                            type(props).__name__,
                         )
                         params["properties"] = {}
                     fn["parameters"] = params
                 elif params is not None:
                     logger.warning(
                         "[SANITIZE] tool '%s' parameters is %s, coercing to {}",
-                        fn.get("name", "?"), type(params).__name__,
+                        fn.get("name", "?"),
+                        type(params).__name__,
                     )
                     fn["parameters"] = {}
                 t["function"] = fn
@@ -186,9 +192,7 @@ class VLLMRayProvider(CustomLLM):
 
         server_id: str | None = None
         try:
-            server_id, server = await self._lb.acquire_server.remote(
-                request_id=sticky_key
-            )
+            server_id, server = await self._lb.acquire_server.remote(request_id=sticky_key)
             request_id = uuid4().hex
             ref = server.generate.remote(
                 prompt_ids=prompt_ids,
@@ -207,9 +211,9 @@ class VLLMRayProvider(CustomLLM):
             if "Prompt length" in err_msg and "exceeds" in err_msg:
                 eos_token_id = getattr(self.tokenizer, "eos_token_id", None) or 0
                 logger.warning(
-                    "[GENERATE] Prompt too long (%d tokens), terminating "
-                    "rollout with EOS: %s",
-                    len(prompt_ids), err_msg,
+                    "[GENERATE] Prompt too long (%d tokens), terminating rollout with EOS: %s",
+                    len(prompt_ids),
+                    err_msg,
                 )
                 return [eos_token_id], [], "length", "", None
             raise
@@ -228,12 +232,11 @@ class VLLMRayProvider(CustomLLM):
         if server_metadata:
             logger.debug(
                 "[GENERATE] server_id=%s, server_metadata=%s",
-                server_id, server_metadata,
+                server_id,
+                server_metadata,
             )
 
-        completion_text = self.tokenizer.decode(
-            token_ids, skip_special_tokens=False
-        )
+        completion_text = self.tokenizer.decode(token_ids, skip_special_tokens=False)
 
         return token_ids, log_probs, stop_reason, completion_text, server_id
 
@@ -241,14 +244,12 @@ class VLLMRayProvider(CustomLLM):
     # Helpers
     # ------------------------------------------------------------------
 
-    def _build_logprobs(
-        self, token_ids: list[int], log_probs: list[float]
-    ) -> ChoiceLogprobs | None:
+    def _build_logprobs(self, token_ids: list[int], log_probs: list[float]) -> ChoiceLogprobs | None:
         """Build LiteLLM ``ChoiceLogprobs`` from raw token data."""
         if not log_probs:
             return None
         content = []
-        for tid, lp in zip(token_ids, log_probs):
+        for tid, lp in zip(token_ids, log_probs, strict=False):
             tok_str = self.tokenizer.decode([tid])
             content.append(
                 ChatCompletionTokenLogprob(
@@ -278,12 +279,12 @@ class VLLMRayProvider(CustomLLM):
             logger.warning("[TOOL_PARSE] No tool_parser configured, returning raw text")
             return completion_text, None, "stop"
 
-        content_text, parsed_calls = await self.tool_parser.extract_tool_calls(
-            token_ids, tools=tools
+        content_text, parsed_calls = await self.tool_parser.extract_tool_calls(token_ids, tools=tools)
+        logger.debug(
+            "[TOOL_PARSE] extract_tool_calls -> content_text_len=%d, parsed_calls_count=%d",
+            len(content_text) if content_text else 0,
+            len(parsed_calls) if parsed_calls else 0,
         )
-        logger.debug("[TOOL_PARSE] extract_tool_calls -> content_text_len=%d, parsed_calls_count=%d",
-                    len(content_text) if content_text else 0,
-                    len(parsed_calls) if parsed_calls else 0)
         if not parsed_calls:
             logger.debug("[TOOL_PARSE] No parsed calls, returning as stop")
             return content_text, None, "stop"
@@ -301,8 +302,9 @@ class VLLMRayProvider(CustomLLM):
                     },
                 }
             )
-            logger.debug("[TOOL_PARSE] Parsed tool_call: name=%s, args=%r",
-                        tc.name, tc.arguments[:200] if tc.arguments else "")
+            logger.debug(
+                "[TOOL_PARSE] Parsed tool_call: name=%s, args=%r", tc.name, tc.arguments[:200] if tc.arguments else ""
+            )
         return content_text, openai_tool_calls, "tool_calls"
 
     # ------------------------------------------------------------------
@@ -324,11 +326,13 @@ class VLLMRayProvider(CustomLLM):
         acompletion=None,
         litellm_params=None,
         logger_fn=None,
-        headers={},
-        timeout: Optional[Union[float, httpx.Timeout]] = None,
+        headers=None,
+        timeout: Optional[float | httpx.Timeout] = None,
         client: Optional[AsyncHTTPHandler] = None,
     ) -> ModelResponse:
         """Async chat completion via vLLM Ray RPC."""
+        if headers is None:
+            headers = {}
         temperature = optional_params.get("temperature", 1.0)
         top_p = optional_params.get("top_p", 1.0)
         max_tokens = optional_params.get("max_tokens", 2048)
@@ -337,25 +341,25 @@ class VLLMRayProvider(CustomLLM):
         repetition_penalty = optional_params.get("repetition_penalty")
 
         extra_body = optional_params.get("extra_body", {})
-        session_id = (
-            extra_body.get("session_id") if isinstance(extra_body, dict) else None
-        )
+        session_id = extra_body.get("session_id") if isinstance(extra_body, dict) else None
 
         try:
-            logger.debug("[ACOMPLETION] Request: model=%s, tools=%s (count=%d), messages_count=%d",
-                        model, "present" if tools else "absent",
-                        len(tools) if tools else 0, len(messages))
-            token_ids, log_probs, stop_reason, completion_text, server_id = (
-                await self._generate(
-                    messages=messages,
-                    session_id=session_id,
-                    temperature=temperature,
-                    top_p=top_p,
-                    max_tokens=max_tokens,
-                    stop=stop,
-                    tools=tools,
-                    repetition_penalty=repetition_penalty,
-                )
+            logger.debug(
+                "[ACOMPLETION] Request: model=%s, tools=%s (count=%d), messages_count=%d",
+                model,
+                "present" if tools else "absent",
+                len(tools) if tools else 0,
+                len(messages),
+            )
+            token_ids, log_probs, stop_reason, completion_text, server_id = await self._generate(
+                messages=messages,
+                session_id=session_id,
+                temperature=temperature,
+                top_p=top_p,
+                max_tokens=max_tokens,
+                stop=stop,
+                tools=tools,
+                repetition_penalty=repetition_penalty,
             )
             logger.debug(
                 "[ACOMPLETION] Generate returned: token_ids_len=%d, completion_text_len=%d, "
@@ -366,8 +370,8 @@ class VLLMRayProvider(CustomLLM):
                 (completion_text[:500] if completion_text else "")[:500],
             )
         except Exception as e:
-            logger.error("[ACOMPLETION] Generate failed: %s", e, exc_info=True)
-            raise CustomLLMError(status_code=500, message=str(e))
+            logger.exception("[ACOMPLETION] Generate failed: %s", e)
+            raise CustomLLMError(status_code=500, message=str(e)) from e
 
         # Parse tool calls
         logger.debug("[ACOMPLETION] Calling _parse_tool_calls...")
@@ -382,9 +386,11 @@ class VLLMRayProvider(CustomLLM):
         )
         if tool_calls_list:
             for tc in tool_calls_list:
-                logger.debug("[ACOMPLETION] Tool call: name=%s, args_preview=%r",
-                            tc.get("function", {}).get("name"),
-                            str(tc.get("function", {}).get("arguments", ""))[:300])
+                logger.debug(
+                    "[ACOMPLETION] Tool call: name=%s, args_preview=%r",
+                    tc.get("function", {}).get("name"),
+                    str(tc.get("function", {}).get("arguments", ""))[:300],
+                )
         # Override finish_reason if vLLM provided a meaningful one
         if stop_reason in ("stop", "length"):
             finish_reason = stop_reason
@@ -395,17 +401,12 @@ class VLLMRayProvider(CustomLLM):
         # Build message
         message_dict: dict[str, Any] = {"role": "assistant"}
         if tool_calls_list:
-            message_dict["content"] = (
-                content_text.strip()
-                if content_text and content_text.strip()
-                else None
-            )
+            message_dict["content"] = content_text.strip() if content_text and content_text.strip() else None
             message_dict["tool_calls"] = tool_calls_list
         else:
             message_dict["content"] = content_text
         logger.debug(
-            "[ACOMPLETION] Final message: role=assistant, has_tool_calls=%s, "
-            "content_preview=%r",
+            "[ACOMPLETION] Final message: role=assistant, has_tool_calls=%s, content_preview=%r",
             bool(tool_calls_list),
             str(message_dict.get("content", ""))[:300],
         )
@@ -443,8 +444,8 @@ class VLLMRayProvider(CustomLLM):
         acompletion=None,
         litellm_params=None,
         logger_fn=None,
-        headers={},
-        timeout: Optional[Union[float, httpx.Timeout]] = None,
+        headers=None,
+        timeout: Optional[float | httpx.Timeout] = None,
         client: Optional[AsyncHTTPHandler] = None,
     ) -> AsyncIterator[GenericStreamingChunk]:
         """Async streaming -- generates fully then yields per-token.
@@ -452,6 +453,8 @@ class VLLMRayProvider(CustomLLM):
         vLLM Ray RPC returns the full response at once, so we simulate
         streaming by yielding one ``GenericStreamingChunk`` per token.
         """
+        if headers is None:
+            headers = {}
         temperature = optional_params.get("temperature", 1.0)
         top_p = optional_params.get("top_p", 1.0)
         max_tokens = optional_params.get("max_tokens", 2048)
@@ -460,31 +463,23 @@ class VLLMRayProvider(CustomLLM):
         repetition_penalty = optional_params.get("repetition_penalty")
 
         extra_body = optional_params.get("extra_body", {})
-        session_id = (
-            extra_body.get("session_id") if isinstance(extra_body, dict) else None
-        )
+        session_id = extra_body.get("session_id") if isinstance(extra_body, dict) else None
 
         try:
-            token_ids, log_probs, stop_reason, completion_text, _server_id = (
-                await self._generate(
-                    messages=messages,
-                    session_id=session_id,
-                    temperature=temperature,
-                    top_p=top_p,
-                    max_tokens=max_tokens,
-                    stop=stop,
-                    tools=tools,
-                    repetition_penalty=repetition_penalty,
-                )
+            token_ids, log_probs, stop_reason, completion_text, _server_id = await self._generate(
+                messages=messages,
+                session_id=session_id,
+                temperature=temperature,
+                top_p=top_p,
+                max_tokens=max_tokens,
+                stop=stop,
+                tools=tools,
+                repetition_penalty=repetition_penalty,
             )
         except Exception as e:
-            raise CustomLLMError(status_code=500, message=str(e))
+            raise CustomLLMError(status_code=500, message=str(e)) from e
 
-        finish_reason = (
-            stop_reason
-            if stop_reason in ("stop", "length", "tool_calls")
-            else "stop"
-        )
+        finish_reason = stop_reason if stop_reason in ("stop", "length", "tool_calls") else "stop"
 
         for i, tid in enumerate(token_ids):
             tok_text = self.tokenizer.decode([tid])
@@ -505,9 +500,7 @@ class VLLMRayProvider(CustomLLM):
                 ),
                 "index": 0,
                 "tool_use": None,
-                "provider_specific_fields": (
-                    {"token_ids": token_ids} if is_last else None
-                ),
+                "provider_specific_fields": ({"token_ids": token_ids} if is_last else None),
             }
             yield chunk
 

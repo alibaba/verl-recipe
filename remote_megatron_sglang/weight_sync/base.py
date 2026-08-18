@@ -35,7 +35,6 @@ from typing import TYPE_CHECKING, Any, Callable
 
 if TYPE_CHECKING:
     from omegaconf import DictConfig
-
     from recipe.remote_megatron_sglang.infer_client import SGLangInferClient
     from recipe.remote_megatron_sglang.train_client import MegatronTrainClient
 

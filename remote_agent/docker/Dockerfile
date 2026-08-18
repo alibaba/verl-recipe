@@ -110,6 +110,17 @@ COPY recipe/remote_agent /workspace/remote_agent
 RUN pip install shortuuid aiohttp
 
 # ============================================================
+# 4a. remote_megatron_sglang recipe (dual-external RL training:
+#     external Megatron PyTorchJob train server + external SGLang
+#     inference, verl as a CPU-only orchestrator).
+#     Unlike remote_agent it keeps the `recipe.` namespace because its
+#     imports are recipe.remote_megatron_sglang.*; /workspace is already on
+#     PYTHONPATH so only the package init + the recipe dir are needed.
+# ============================================================
+COPY recipe/__init__.py /workspace/recipe/__init__.py
+COPY recipe/remote_megatron_sglang /workspace/recipe/remote_megatron_sglang
+
+# ============================================================
 # 4b. V1 TaskRunner dependencies + sitecustomize bootstrap
 # ============================================================
 # transfer_queue is required by verl's V1 TaskRunner (async rollout).

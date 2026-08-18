@@ -36,15 +36,21 @@ def test_weight_sync_transports_register_on_import():
 def test_backend_registers_and_resolves():
     """megatron_sglang backend self-registers and resolves via the registry."""
     pytest.importorskip("omegaconf")
+    import recipe.remote_megatron_sglang.backend as _  # noqa: F401  (import side-effect)
     from omegaconf import OmegaConf
 
-    import recipe.remote_megatron_sglang.backend as _  # noqa: F401  (import side-effect)
-    from verl.remote_backend import RemoteBackendRegistry
+    try:
+        from verl.remote_backend import RemoteBackendRegistry
+    except ImportError:  # upstream verl main does not ship verl.remote_backend
+        from recipe.remote_megatron_sglang.remote_backend_compat import RemoteBackendRegistry
 
     assert "megatron_sglang" in RemoteBackendRegistry.list()
 
     cfg = OmegaConf.create(
         {
+            # from_config validates the single-CPU-forwarder invariant off
+            # trainer.{n_gpus_per_node,nnodes}, so both must be present.
+            "trainer": {"n_gpus_per_node": 1, "nnodes": 1},
             "remote_backend": {
                 "megatron_sglang": {
                     "train_endpoint": "http://train:8000",
@@ -57,14 +63,22 @@ def test_backend_registers_and_resolves():
                         "group_world_size": 2,
                     },
                 }
-            }
+            },
         }
     )
     backend = RemoteBackendRegistry.create("megatron_sglang", cfg)
-    assert backend.requires_single_forwarder() is True
+    # The adapter opts OUT of the generic trainer assert and validates the
+    # single-CPU-forwarder invariant itself in from_config.
+    assert backend.requires_single_forwarder() is False
     # reconnect handle is small + serializable
     handle = backend.reconnect_handle()
     assert handle["backend"] == "megatron_sglang"
+
+    # requires_single_forwarder() is False (the adapter validates the invariant
+    # itself), so a mismatched forwarder count must raise here.
+    bad = OmegaConf.merge(cfg, {"trainer": {"n_gpus_per_node": 8}})
+    with pytest.raises(ValueError):
+        RemoteBackendRegistry.create("megatron_sglang", bad)
 
 
 def test_tensordict_roundtrip():
@@ -73,9 +87,8 @@ def test_tensordict_roundtrip():
     pytest.importorskip("safetensors")
     pytest.importorskip("tensordict")
     import torch
-    from tensordict import TensorDict
-
     from recipe.remote_megatron_sglang.server import protocol as P
+    from tensordict import TensorDict
 
     td = TensorDict(
         {"input_ids": torch.arange(12).reshape(3, 4), "attention_mask": torch.ones(3, 4, dtype=torch.long)},

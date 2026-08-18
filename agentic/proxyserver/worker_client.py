@@ -33,7 +33,6 @@ import asyncio
 import json
 import logging
 import time
-import os
 from typing import Any
 from uuid import uuid4
 
@@ -66,6 +65,7 @@ except ImportError:
 
     def detach_context(token):
         pass
+
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -145,27 +145,19 @@ class InferenceWorkerClient:
 
         from .vllm_provider import VLLMRayProvider
 
-        self._tokenizer = AutoTokenizer.from_pretrained(
-            self.model_path, trust_remote_code=True
-        )
+        self._tokenizer = AutoTokenizer.from_pretrained(self.model_path, trust_remote_code=True)
 
         tool_parser = None
         if self.tool_format:
             if self.tool_parser_factory is not None:
-                tool_parser = self.tool_parser_factory(
-                    self.tool_format, self._tokenizer
-                )
+                tool_parser = self.tool_parser_factory(self.tool_format, self._tokenizer)
             else:
                 try:
                     from verl.experimental.agent_loop.tool_parser import ToolParser
-                    tool_parser = ToolParser.get_tool_parser(
-                        self.tool_format, self._tokenizer
-                    )
+
+                    tool_parser = ToolParser.get_tool_parser(self.tool_format, self._tokenizer)
                 except ImportError:
-                    logger.warning(
-                        "verl.experimental.agent_loop.tool_parser not available; "
-                        "tool parsing disabled"
-                    )
+                    logger.warning("verl.experimental.agent_loop.tool_parser not available; tool parsing disabled")
 
         self._provider = VLLMRayProvider(
             load_balancer=self.load_balancer,
@@ -174,7 +166,8 @@ class InferenceWorkerClient:
         )
         logger.info(
             "Inference provider initialized (model=%s, tool_format=%s)",
-            self.model_path, self.tool_format,
+            self.model_path,
+            self.tool_format,
         )
 
     # ------------------------------------------------------------------
@@ -208,9 +201,9 @@ class InferenceWorkerClient:
         repetition_penalty = request.get("repetition_penalty")
 
         logger.debug(
-            "[WORKER_INFER] Request: session=%s, messages=%d, tools=%s (count=%d), "
-            "max_tokens=%d",
-            session_id, len(messages),
+            "[WORKER_INFER] Request: session=%s, messages=%d, tools=%s (count=%d), max_tokens=%d",
+            session_id,
+            len(messages),
             "present" if tools else "absent",
             len(tools) if tools else 0,
             max_tokens,
@@ -219,33 +212,32 @@ class InferenceWorkerClient:
         try:
             inference_started_at = time.time()
             with optional_span("worker.inference") as inf_span:
-                token_ids, log_probs, stop_reason, completion_text, server_id = (
-                    await self._provider._generate(
-                        messages=messages,
-                        session_id=session_id,
-                        temperature=temperature,
-                        top_p=top_p,
-                        max_tokens=max_tokens,
-                        stop=stop,
-                        tools=tools,
-                        repetition_penalty=repetition_penalty,
-                    )
+                token_ids, log_probs, stop_reason, completion_text, server_id = await self._provider._generate(
+                    messages=messages,
+                    session_id=session_id,
+                    temperature=temperature,
+                    top_p=top_p,
+                    max_tokens=max_tokens,
+                    stop=stop,
+                    tools=tools,
+                    repetition_penalty=repetition_penalty,
                 )
                 inference_completed_at = time.time()
                 if inf_span:
                     inf_span.set_attribute("token_count", len(token_ids))
-                    inf_span.set_attribute("duration_ms", round((inference_completed_at - inference_started_at) * 1000, 2))
+                    inf_span.set_attribute(
+                        "duration_ms", round((inference_completed_at - inference_started_at) * 1000, 2)
+                    )
             logger.debug(
-                "[WORKER_INFER] Generate returned: token_ids=%d, completion_text_len=%d, "
-                "completion_preview=%r",
+                "[WORKER_INFER] Generate returned: token_ids=%d, completion_text_len=%d, completion_preview=%r",
                 len(token_ids),
                 len(completion_text) if completion_text else 0,
                 (completion_text[:500] if completion_text else "")[:500],
             )
 
             with optional_span("worker.tool_parse") as tp_span:
-                content_text, tool_calls_list, finish_reason = (
-                    await self._provider._parse_tool_calls(token_ids, completion_text)
+                content_text, tool_calls_list, finish_reason = await self._provider._parse_tool_calls(
+                    token_ids, completion_text
                 )
                 tool_parse_completed_at = time.time()
                 if tp_span:
@@ -261,11 +253,13 @@ class InferenceWorkerClient:
 
             # Cache token_ids/logprobs locally — not sent to proxy
             if session_id:
-                self._session_cache.setdefault(session_id, []).append({
-                    "token_ids": token_ids,
-                    "logprobs": list(log_probs),
-                    "completion_text": content_text,
-                })
+                self._session_cache.setdefault(session_id, []).append(
+                    {
+                        "token_ids": token_ids,
+                        "logprobs": list(log_probs),
+                        "completion_text": content_text,
+                    }
+                )
 
             return {
                 "completion_text": completion_text,
@@ -283,7 +277,7 @@ class InferenceWorkerClient:
             }
 
         except Exception as e:
-            logger.error("[WORKER_INFER] Inference failed: %s", e, exc_info=True)
+            logger.exception("[WORKER_INFER] Inference failed: %s", e)
             return {
                 "completion_text": "",
                 "content_text": "",
@@ -305,9 +299,7 @@ class InferenceWorkerClient:
         parent_ctx = extract_context(request)
         token = attach_context(parent_ctx)
         try:
-            with optional_span(
-                "worker.handle_request", attributes={"request_id": request_id}
-            ):
+            with optional_span("worker.handle_request", attributes={"request_id": request_id}):
                 result = await self._do_inference(request)
         finally:
             detach_context(token)
@@ -329,9 +321,7 @@ class InferenceWorkerClient:
             if self._ws is not None:
                 await self._ws.send(json.dumps(response))
         except Exception as e:
-            logger.error(
-                "Failed to send response for request %s: %s", request_id, e
-            )
+            logger.error("Failed to send response for request %s: %s", request_id, e)
 
     async def _run_heartbeat(self) -> None:
         """Periodically send ping messages to keep the connection alive."""
@@ -356,7 +346,8 @@ class InferenceWorkerClient:
 
         logger.debug(
             "Connecting to proxy at %s (worker_id=%s)",
-            self.proxy_ws_url, self.worker_id,
+            self.proxy_ws_url,
+            self.worker_id,
         )
 
         async with websockets.connect(
@@ -367,10 +358,14 @@ class InferenceWorkerClient:
             self._ws = ws
 
             # Send handshake
-            await ws.send(json.dumps({
-                "type": "worker_hello",
-                "worker_id": self.worker_id,
-            }))
+            await ws.send(
+                json.dumps(
+                    {
+                        "type": "worker_hello",
+                        "worker_id": self.worker_id,
+                    }
+                )
+            )
 
             # Wait for ack
             ack_raw = await asyncio.wait_for(ws.recv(), timeout=10.0)
@@ -414,9 +409,7 @@ class InferenceWorkerClient:
                         pass
                 # Wait for in-flight inference tasks
                 if tasks:
-                    logger.debug(
-                        "Waiting for %d in-flight inference tasks...", len(tasks)
-                    )
+                    logger.debug("Waiting for %d in-flight inference tasks...", len(tasks))
                     await asyncio.gather(*tasks, return_exceptions=True)
 
             self._ws = None
@@ -436,9 +429,9 @@ class InferenceWorkerClient:
                         self.reconnect_max_delay,
                     )
                     logger.warning(
-                        "Connection to proxy lost. Reconnecting in %.1fs "
-                        "(attempt %d)...",
-                        delay, consecutive_failures,
+                        "Connection to proxy lost. Reconnecting in %.1fs (attempt %d)...",
+                        delay,
+                        consecutive_failures,
                     )
                     await asyncio.sleep(delay)
 
@@ -453,9 +446,10 @@ class InferenceWorkerClient:
                     self.reconnect_max_delay,
                 )
                 logger.warning(
-                    "Worker connection error: %s. Reconnecting in %.1fs "
-                    "(attempt %d)...",
-                    e, delay, consecutive_failures,
+                    "Worker connection error: %s. Reconnecting in %.1fs (attempt %d)...",
+                    e,
+                    delay,
+                    consecutive_failures,
                 )
                 await asyncio.sleep(delay)
 

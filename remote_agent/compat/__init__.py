@@ -98,9 +98,7 @@ def install() -> None:
                     # dataclass does not know about (e.g. rollout.remote_agent)
                     resolved = OmegaConf.to_container(config, resolve=True)
                     filtered = {k: v for k, v in resolved.items() if k in known}
-                    merged = OmegaConf.merge(
-                        OmegaConf.structured(target_type), OmegaConf.create(filtered)
-                    )
+                    merged = OmegaConf.merge(OmegaConf.structured(target_type), OmegaConf.create(filtered))
                     return OmegaConf.to_object(merged)
             except Exception:
                 # fall through to the original implementation untouched

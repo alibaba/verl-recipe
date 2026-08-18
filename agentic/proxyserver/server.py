@@ -38,7 +38,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 import socket
 import time
 from typing import Any, Callable, Coroutine
@@ -46,7 +45,7 @@ from uuid import uuid4
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request, WebSocket
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse
 
 from .recorder import SessionAlreadyExistsError, SessionClosedError, SessionRecorder
 
@@ -58,6 +57,7 @@ except ImportError:
     @contextmanager
     def optional_span(name, attributes=None, kind=None):
         yield None
+
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -75,7 +75,7 @@ CompletionHandler = Callable[
 # ---------------------------------------------------------------------------
 
 
-def _build_app(proxy: "LLMProxyServer") -> FastAPI:
+def _build_app(proxy: LLMProxyServer) -> FastAPI:
     """Build the FastAPI application that serves as the OpenAI proxy."""
 
     app = FastAPI(title="LLM Proxy", version="0.5.0")
@@ -97,16 +97,14 @@ def _build_app(proxy: "LLMProxyServer") -> FastAPI:
             raise HTTPException(
                 status_code=409,
                 detail=f"Session {session_id} already exists",
-            )
+            ) from None
         return {"session_id": session_id, "status": "created"}
 
     @app.get("/sessions/{session_id}")
     async def get_session(session_id: str):
         session = proxy.recorder.get_session(session_id)
         if session is None and proxy.session_dump_dir:
-            session = proxy.recorder.load_completed_session(
-                session_id, proxy.session_dump_dir
-            )
+            session = proxy.recorder.load_completed_session(session_id, proxy.session_dump_dir)
         if session is None:
             raise HTTPException(status_code=404, detail="Session not found")
         return session.model_dump()
@@ -128,7 +126,9 @@ def _build_app(proxy: "LLMProxyServer") -> FastAPI:
         dumped_path = None
         if proxy.session_dump_dir:
             dumped_path = proxy.recorder.dump_session_to_file(
-                session_id, proxy.session_dump_dir, remove=False,
+                session_id,
+                proxy.session_dump_dir,
+                remove=False,
             )
         proxy.delete_session(session_id)
         resp: dict[str, Any] = {"session_id": session_id, "status": "deleted"}
@@ -191,9 +191,7 @@ def _build_app(proxy: "LLMProxyServer") -> FastAPI:
         """
         # Reject requests for sessions that have already been completed/deleted.
         if proxy.recorder.is_session_closed(session_id):
-            logger.warning(
-                "[PROXY] Session %s is closed, rejecting request", session_id
-            )
+            logger.warning("[PROXY] Session %s is closed, rejecting request", session_id)
             return JSONResponse(
                 status_code=410,
                 content={"error": f"Session {session_id} has been closed"},
@@ -206,7 +204,10 @@ def _build_app(proxy: "LLMProxyServer") -> FastAPI:
         logger.debug(
             "[PROXY] Received chat completion request: session=%s, mode=%s, "
             "messages_count=%d, stream=%s, tools=%s (count=%d)",
-            session_id, proxy.mode, len(messages), is_streaming,
+            session_id,
+            proxy.mode,
+            len(messages),
+            is_streaming,
             "present" if body.get("tools") else "absent",
             len(body.get("tools", [])),
         )
@@ -216,14 +217,10 @@ def _build_app(proxy: "LLMProxyServer") -> FastAPI:
 
         if proxy.mode == "local" and proxy._completion_handler is not None:
             logger.debug("[PROXY] Routing to LOCAL handler")
-            return await proxy._completion_handler(
-                proxy, session_id, messages, body, is_streaming
-            )
+            return await proxy._completion_handler(proxy, session_id, messages, body, is_streaming)
         else:
             logger.debug("[PROXY] Routing to RELAY handler")
-            return await _handle_relay_completion(
-                proxy, session_id, messages, body, is_streaming
-            )
+            return await _handle_relay_completion(proxy, session_id, messages, body, is_streaming)
 
     # ---- WebSocket endpoint for inference workers (relay mode) -----------
 
@@ -249,10 +246,11 @@ def _build_app(proxy: "LLMProxyServer") -> FastAPI:
     async def record_training_timing(request: Request):
         body = await request.json()
         from .models import TrainingRoundTiming
+
         try:
             timing = TrainingRoundTiming.model_validate(body)
         except Exception as e:
-            raise HTTPException(status_code=422, detail=f"Validation error: {e}")
+            raise HTTPException(status_code=422, detail=f"Validation error: {e}") from e
         dumped_path = None
         if proxy.session_dump_dir:
             dumped_path = proxy.recorder.record_training_timing(timing, proxy.session_dump_dir)
@@ -286,7 +284,7 @@ def _build_app(proxy: "LLMProxyServer") -> FastAPI:
 
 
 async def _handle_relay_completion(
-    proxy: "LLMProxyServer",
+    proxy: LLMProxyServer,
     session_id: str,
     messages: list[dict[str, Any]],
     body: dict[str, Any],
@@ -318,9 +316,7 @@ async def _handle_relay_completion(
             return JSONResponse(status_code=500, content={"error": str(e)})
 
         if result.get("error"):
-            return JSONResponse(
-                status_code=500, content={"error": result["error"]}
-            )
+            return JSONResponse(status_code=500, content={"error": result["error"]})
 
         response_received_at = time.time()
 
@@ -395,15 +391,12 @@ def build_openai_response(
     """
     message: dict[str, Any] = {"role": "assistant"}
     if tool_calls:
-        message["content"] = (
-            content_text.strip() if content_text and content_text.strip() else None
-        )
+        message["content"] = content_text.strip() if content_text and content_text.strip() else None
         message["tool_calls"] = tool_calls
     else:
         message["content"] = content_text
     logger.debug(
-        "[OPENAI_RESP] Built response: has_tool_calls=%s, tool_calls_count=%d, "
-        "content_len=%d, finish_reason=%s",
+        "[OPENAI_RESP] Built response: has_tool_calls=%s, tool_calls_count=%d, content_len=%d, finish_reason=%s",
         bool(tool_calls),
         len(tool_calls) if tool_calls else 0,
         len(content_text) if content_text else 0,

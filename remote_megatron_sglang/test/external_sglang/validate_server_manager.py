@@ -10,6 +10,7 @@ Exercises the exact flow the trainer uses:
 
 Run from a Ray node with /mnt/models (e.g. the sglang pod): python3 validate_server_manager.py
 """
+
 import os
 
 import ray
@@ -24,13 +25,14 @@ MODEL = os.environ.get("MODEL_PATH", "/mnt/models/Qwen2.5-3B-Instruct")
 
 def main():
     ray.init(address="auto")
-    config = OmegaConf.create({
-        "actor_rollout_ref": {
-            "rollout": {"name": "sglang", "external_sglang_endpoints": [URL],
-                        "prometheus": {"enable": False}},
-            "model": {"path": MODEL},
+    config = OmegaConf.create(
+        {
+            "actor_rollout_ref": {
+                "rollout": {"name": "sglang", "external_sglang_endpoints": [URL], "prometheus": {"enable": False}},
+                "model": {"path": MODEL},
+            }
         }
-    })
+    )
 
     mgr = ExternalLLMServerManager.create(config=config)
     print("get_addresses():", mgr.get_addresses())
@@ -41,10 +43,13 @@ def main():
     prompt_ids = tok("The capital of France is")["input_ids"]
 
     sid, server = ray.get(lb.acquire_server.remote(request_id="r1"))
-    out = ray.get(server.generate.remote(
-        request_id="r1", prompt_ids=prompt_ids,
-        sampling_params={"temperature": 0, "max_new_tokens": 16},
-    ))
+    out = ray.get(
+        server.generate.remote(
+            request_id="r1",
+            prompt_ids=prompt_ids,
+            sampling_params={"temperature": 0, "max_new_tokens": 16},
+        )
+    )
     lb.release_server.remote(sid)
     print("acquired server:", sid)
     print("decoded        :", repr(tok.decode(out.token_ids)))
