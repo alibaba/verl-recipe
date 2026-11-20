@@ -136,7 +136,7 @@ def _make_litellm_handler():
             "messages": messages,
             "temperature": body.get("temperature", 1.0),
             "top_p": body.get("top_p", 1.0),
-            "max_tokens": body.get("max_tokens", 2048),
+            "max_tokens": body.get("max_tokens"),
             "stream": is_streaming,
             "extra_body": {"session_id": trial_id},
         }
@@ -237,6 +237,7 @@ def _record_from_response(
             logprobs=logprobs_list,
             finish_reason=getattr(choice, "finish_reason", "stop") or "stop",
             tool_calls=tool_calls,
+            global_steps=psf.get("global_steps"),
         )
     except SessionClosedError:
         logger.warning(
@@ -256,6 +257,7 @@ async def _stream_and_record(
     collected_token_ids: list[int] = []
     collected_logprobs: list[float] = []
     finish_reason = "stop"
+    collected_global_steps = None
     tool_calls_collected: list[dict[str, Any]] = []
 
     try:
@@ -280,6 +282,8 @@ async def _stream_and_record(
                     finish_reason = delta.finish_reason
 
                 psf = getattr(delta, "provider_specific_fields", None) or {}
+                if "global_steps" in psf:
+                    collected_global_steps = psf["global_steps"]
                 if "token_ids" in psf:
                     collected_token_ids = psf["token_ids"]
 
@@ -299,6 +303,7 @@ async def _stream_and_record(
                 logprobs=collected_logprobs,
                 finish_reason=finish_reason,
                 tool_calls=tool_calls_collected if tool_calls_collected else None,
+                global_steps=collected_global_steps,
             )
         except SessionClosedError:
             logger.warning(

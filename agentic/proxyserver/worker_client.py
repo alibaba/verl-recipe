@@ -195,13 +195,13 @@ class InferenceWorkerClient:
         session_id = request.get("session_id")
         temperature = request.get("temperature", 1.0)
         top_p = request.get("top_p", 1.0)
-        max_tokens = request.get("max_tokens", 2048)
+        max_tokens = request.get("max_tokens")
         stop = request.get("stop")
         tools = request.get("tools")
         repetition_penalty = request.get("repetition_penalty")
 
         logger.debug(
-            "[WORKER_INFER] Request: session=%s, messages=%d, tools=%s (count=%d), max_tokens=%d",
+            "[WORKER_INFER] Request: session=%s, messages=%d, tools=%s (count=%d), max_tokens=%s",
             session_id,
             len(messages),
             "present" if tools else "absent",
@@ -210,6 +210,7 @@ class InferenceWorkerClient:
         )
 
         try:
+            generation_metadata: dict = {}
             inference_started_at = time.time()
             with optional_span("worker.inference") as inf_span:
                 token_ids, log_probs, stop_reason, completion_text, server_id = await self._provider._generate(
@@ -221,6 +222,7 @@ class InferenceWorkerClient:
                     stop=stop,
                     tools=tools,
                     repetition_penalty=repetition_penalty,
+                    metadata_out=generation_metadata,
                 )
                 inference_completed_at = time.time()
                 if inf_span:
@@ -258,6 +260,7 @@ class InferenceWorkerClient:
                         "token_ids": token_ids,
                         "logprobs": list(log_probs),
                         "completion_text": content_text,
+                        "global_steps": generation_metadata.get("global_steps"),
                     }
                 )
 
