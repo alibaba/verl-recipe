@@ -151,6 +151,9 @@ class TaskRunner(TaskRunnerV1.__ray_metadata__.modified_class):
     """Use the native V1 lifecycle; attach the remote-agent proxy before rollout."""
 
     def init_agent_loop_manager(self):
+        from recipe.agentic.version_metrics import install_version_metrics
+
+        install_version_metrics(self.trainer)
         load_balancer = self.trainer.llm_server_manager.global_load_balancer
         proxy_cfg = self.config.get("proxy_server", {})
         standalone_proxy_url = os.environ.get("PROXY_SERVER_URL")

@@ -22,7 +22,9 @@ def test_proxy_precedes_native_agent_loop_manager():
         {"proxy_server": {"port": 8001}, "actor_rollout_ref": {"model": {"path": "/model"}}}
     )
     lb = object()
-    runner.trainer = SimpleNamespace(llm_server_manager=SimpleNamespace(global_load_balancer=lb))
+    runner.trainer = SimpleNamespace(
+        llm_server_manager=SimpleNamespace(global_load_balancer=lb), _compute_metrics=lambda *a, **kw: None
+    )
     native = TaskRunnerV1.__ray_metadata__.modified_class
     events = []
     with (
@@ -42,7 +44,9 @@ def test_standalone_registry_precedes_native_agent_loop_manager():
     runner = object.__new__(agentic_main.TaskRunner.__ray_metadata__.modified_class)
     runner.config = OmegaConf.create({"proxy_server": {}, "actor_rollout_ref": {"model": {"path": "/model"}}})
     lb = object()
-    runner.trainer = SimpleNamespace(llm_server_manager=SimpleNamespace(global_load_balancer=lb))
+    runner.trainer = SimpleNamespace(
+        llm_server_manager=SimpleNamespace(global_load_balancer=lb), _compute_metrics=lambda *a, **kw: None
+    )
     native = TaskRunnerV1.__ray_metadata__.modified_class
     events = []
     with (

@@ -147,6 +147,7 @@ class SessionRecorder:
         gpu_id: str | None = None,
         worker_id: str | None = None,
         rank_info: dict[str, str] | None = None,
+        global_steps: int | None = None,
     ) -> None:
         """Record a single LLM completion for a session.
 
@@ -206,6 +207,7 @@ class SessionRecorder:
                 gpu_id=gpu_id,
                 worker_id=worker_id,
                 rank_info=rank_info,
+                global_steps=global_steps,
             )
             session.turns.append(record)
         self._append_to_disk(

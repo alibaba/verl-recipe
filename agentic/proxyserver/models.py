@@ -26,6 +26,7 @@ class CompletionRecord(BaseModel):
         default_factory=list,
         description="Log probabilities for each generated token (may be empty when cached on worker)",
     )
+    global_steps: int | None = Field(default=None, description="Actual generation policy version")
     finish_reason: str | None = Field(default=None, description="Reason generation stopped: stop, tool_calls, length")
     tool_calls: list[dict[str, Any]] | None = Field(
         default=None, description="Parsed tool calls from the completion, if any"

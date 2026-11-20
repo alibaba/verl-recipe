@@ -302,7 +302,7 @@ async def _handle_relay_completion(
                 messages=messages,
                 temperature=body.get("temperature", 1.0),
                 top_p=body.get("top_p", 1.0),
-                max_tokens=body.get("max_tokens", 2048),
+                max_tokens=body.get("max_tokens"),
                 stop=body.get("stop"),
                 tools=body.get("tools"),
                 repetition_penalty=body.get("repetition_penalty"),

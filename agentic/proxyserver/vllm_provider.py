@@ -136,10 +136,11 @@ class VLLMRayProvider(CustomLLM):
         session_id: str | None,
         temperature: float = 1.0,
         top_p: float = 1.0,
-        max_tokens: int = 2048,
+        max_tokens: int | None = None,
         stop: list[str] | None = None,
         tools: list[dict] | None = None,
         repetition_penalty: float | None = None,
+        metadata_out: dict[str, Any] | None = None,
     ) -> tuple[list[int], list[float], str | None, str, str | None]:
         """Tokenize, call vLLM via Ray, return raw results.
 
@@ -174,9 +175,10 @@ class VLLMRayProvider(CustomLLM):
         sampling_params: dict[str, Any] = {
             "temperature": temperature,
             "top_p": top_p,
-            "max_tokens": max_tokens,
             "logprobs": True,
         }
+        if max_tokens is not None:
+            sampling_params["max_tokens"] = max_tokens
         if stop:
             sampling_params["stop"] = stop
         if repetition_penalty is not None:
@@ -229,6 +231,8 @@ class VLLMRayProvider(CustomLLM):
         # Extract any metadata the inference server attached to the output
         # (e.g. gpu_id, rank_info).  This is Optional and may be empty.
         server_metadata = getattr(output, "extra_fields", {}) or {}
+        if metadata_out is not None:
+            metadata_out.update(server_metadata)
         if server_metadata:
             logger.debug(
                 "[GENERATE] server_id=%s, server_metadata=%s",
@@ -335,7 +339,7 @@ class VLLMRayProvider(CustomLLM):
             headers = {}
         temperature = optional_params.get("temperature", 1.0)
         top_p = optional_params.get("top_p", 1.0)
-        max_tokens = optional_params.get("max_tokens", 2048)
+        max_tokens = optional_params.get("max_tokens")
         stop = optional_params.get("stop")
         tools = optional_params.get("tools")
         repetition_penalty = optional_params.get("repetition_penalty")
@@ -351,6 +355,7 @@ class VLLMRayProvider(CustomLLM):
                 len(tools) if tools else 0,
                 len(messages),
             )
+            generation_metadata: dict[str, Any] = {}
             token_ids, log_probs, stop_reason, completion_text, server_id = await self._generate(
                 messages=messages,
                 session_id=session_id,
@@ -360,6 +365,7 @@ class VLLMRayProvider(CustomLLM):
                 stop=stop,
                 tools=tools,
                 repetition_penalty=repetition_penalty,
+                metadata_out=generation_metadata,
             )
             logger.debug(
                 "[ACOMPLETION] Generate returned: token_ids_len=%d, completion_text_len=%d, "
@@ -417,7 +423,10 @@ class VLLMRayProvider(CustomLLM):
                 index=0,
                 message=Message(**message_dict),
                 logprobs=logprobs_obj,
-                provider_specific_fields={"token_ids": token_ids},
+                provider_specific_fields={
+                    "token_ids": token_ids,
+                    "global_steps": generation_metadata.get("global_steps"),
+                },
             )
         ]
         model_response.model = model
@@ -457,7 +466,7 @@ class VLLMRayProvider(CustomLLM):
             headers = {}
         temperature = optional_params.get("temperature", 1.0)
         top_p = optional_params.get("top_p", 1.0)
-        max_tokens = optional_params.get("max_tokens", 2048)
+        max_tokens = optional_params.get("max_tokens")
         stop = optional_params.get("stop")
         tools = optional_params.get("tools")
         repetition_penalty = optional_params.get("repetition_penalty")
@@ -466,6 +475,7 @@ class VLLMRayProvider(CustomLLM):
         session_id = extra_body.get("session_id") if isinstance(extra_body, dict) else None
 
         try:
+            generation_metadata: dict[str, Any] = {}
             token_ids, log_probs, stop_reason, completion_text, _server_id = await self._generate(
                 messages=messages,
                 session_id=session_id,
@@ -475,6 +485,7 @@ class VLLMRayProvider(CustomLLM):
                 stop=stop,
                 tools=tools,
                 repetition_penalty=repetition_penalty,
+                metadata_out=generation_metadata,
             )
         except Exception as e:
             raise CustomLLMError(status_code=500, message=str(e)) from e
@@ -500,7 +511,11 @@ class VLLMRayProvider(CustomLLM):
                 ),
                 "index": 0,
                 "tool_use": None,
-                "provider_specific_fields": ({"token_ids": token_ids} if is_last else None),
+                "provider_specific_fields": (
+                    {"token_ids": token_ids, "global_steps": generation_metadata.get("global_steps")}
+                    if is_last
+                    else None
+                ),
             }
             yield chunk
 

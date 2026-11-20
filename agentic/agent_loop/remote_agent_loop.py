@@ -969,6 +969,7 @@ class RemoteAgentLoop(AgentLoopBase):
         response_mask: list[int] = []
         response_logprobs: list[float] = []
         num_turns = 0
+        policy_versions: list[int] = []
 
         for i, turn in enumerate(session.turns):
             # Get token_ids/logprobs from worker cache, fall back to re-tokenization
@@ -982,6 +983,9 @@ class RemoteAgentLoop(AgentLoopBase):
                 turn_ids = self.tokenizer.encode(turn.completion_text, add_special_tokens=False)
                 turn_logprobs = [0.0] * len(turn_ids)
 
+            version = cache[i].get("global_steps") if i < len(cache) else getattr(turn, "global_steps", None)
+            if version is not None and turn_ids and len(response_ids) < self.response_length:
+                policy_versions.append(int(version))
             response_ids.extend(turn_ids)
             response_mask.extend([1] * len(turn_ids))
             response_logprobs.extend(turn_logprobs)
@@ -1015,4 +1019,8 @@ class RemoteAgentLoop(AgentLoopBase):
             response_logprobs=response_logprobs if response_logprobs else None,
             num_turns=num_turns,
             metrics={},
+            extra_fields={
+                "min_global_steps": min(policy_versions) if policy_versions else None,
+                "max_global_steps": max(policy_versions) if policy_versions else None,
+            },
         )
