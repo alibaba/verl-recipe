@@ -160,6 +160,24 @@ Key fields:
 - **`runner.kwargs`** — an opaque dict handed to the runner's constructor; the
   core never inspects it.
 
+## Harbor dataset SDK and local tasks
+
+The Harbor dataset helper uses the Alibaba fork's 0.25
+`harbor.training.TrainingDataset` and `VerlAdapter`, with lazy imports so other
+runners do not require Harbor. It retains the recipe's `instance_id` and
+absolute `local_task_path` columns, including SDK dataset/version/first-step
+metadata. See [the complete local task example](../tasks/README.md) for the
+pinned SDK dependency, local/PVC input, versioned repository download, and
+parquet preparation commands. A dataset-only environment can prepare files
+without installing a model runtime or changing an existing execution image.
+
+For automatic materialization via `data.train_harbor_dir` /
+`data.val_harbor_dir`, install that SDK in the driver environment. Alternatively,
+prepare parquet separately, set those directory fields to null, and supply
+`data.train_files` / `data.val_files`; all processes executing tasks must still
+be able to read the recorded task paths. This data-path validation does not
+replace the historical end-to-end version matrix above.
+
 ## Adding your own runner
 
 Subclass `ExternalAgentRunner`, implement `async run(...)`, and register it by
