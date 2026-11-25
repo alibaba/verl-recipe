@@ -256,7 +256,12 @@ python3 -m recipe.agentic.agentic_main \
 
 ### 6.1 目录约定
 
-输入目录下的每个子目录被视为一个 Harbor task，**必须**包含如下两个文件：
+数据准备使用 Alibaba Harbor 0.25 的 `harbor.training.TrainingDataset` 与
+`VerlAdapter`，recipe 仅适配执行所需字段。支持单个任务目录、任务集合目录以及
+ossfs/PVC 挂载路径。完整可运行的本地任务与固定版本安装方法见
+[`tasks/README.md`](../tasks/README.md)。
+
+普通任务的目录如下；多步骤任务由 SDK 读取 `task.toml` 声明的第一个步骤指令：
 
 ```
 <train_root>/
@@ -271,7 +276,8 @@ python3 -m recipe.agentic.agentic_main \
     ...
 ```
 
-不同时包含 `task.toml` 与 `instruction.md` 的子目录会被跳过。
+没有 `task.toml` 的子目录不作为任务；已发现的任务会按 Harbor schema 校验，
+缺失或空指令等错误不会静默跳过。
 
 ### 6.2 生成的 row schema
 
@@ -288,14 +294,29 @@ python3 -m recipe.agentic.agentic_main \
         "index": <从 0 起的序号>,
         "task_id": <子目录名>,
         "local_path": <任务本地路径>,
-        "task_metadata": <task.toml 中的 metadata 表>,
+        "task_metadata": <task.toml 中的 metadata 表，写 parquet 时编码为 JSON>,
+        "dataset": <SDK 数据集名>,
+        "dataset_ref": <仓库版本引用，若有>,
+        "task_name": <SDK 任务名>,
+        "task_path": <相对于数据集的路径>,
+        "step_name": <首步骤名，单步骤时为 None>,
     },
     "instance_id": <子目录名>,         # 顶层字段，会原样透传给 RemoteAgentLoop.run 的 kwargs
     "local_task_path": <任务本地路径>,  # 顶层字段，含任务目录绝对路径
 }
 ```
 
-实现参见 [`dataset/local_harbor.py`](dataset/local_harbor.py)，本地扫描不依赖 OSS / `oss2` SDK。
+实现参见 [`dataset/local_harbor.py`](dataset/local_harbor.py)。本地目录只需
+Harbor training SDK；OSS 仓库下载通过其 `TrainingDataset.from_repo()`，按需安装
+OSS extra。可先运行不依赖 verl/Ray/模型的准备命令，再把 parquet 交给训练：
+
+```bash
+python agentic/dataset/local_harbor.py \
+  --local-dir ./tasks --split train --output ./prepared/train.parquet
+```
+
+以上命令从 recipe 仓库根目录执行，输出必须不存在。OSS context、版本读取与共享
+任务路径要求见 [`tasks/README.md`](../tasks/README.md)。
 
 ### 6.3 配置项
 
